@@ -1,0 +1,3 @@
+These analyses support the manuscript "Long-term and regional-scale data reveal divergent trends of different climate variables on fish body size over 75 years" by Peter J. Flood, Kaitlin E. Schiller, Katelyn B. S. King, Andrew D. Runyon, Kevin E. Wehrly, and Karen M. Alofs.
+
+These scripts are meant to be executed in numeric order based on the numbers at the begining of the file names. The analyses are aimed at determining if a given species age group is changing in length-at-age in response to climate variables relative to other factors (02_boosted_regression_trees) and if a given species age group is changing in length-at-age through time (03_linear_models). 
