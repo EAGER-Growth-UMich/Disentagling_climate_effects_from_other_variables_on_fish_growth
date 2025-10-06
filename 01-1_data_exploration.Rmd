@@ -1,0 +1,428 @@
+---
+title: "011_data_exploration"
+author: "Peter Flood"
+date: "2024-11-07"
+output: 
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    toc: yes
+    toc_float: yes
+
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+getwd()
+```
+
+#Install Libraries
+```{r}
+#Install libraries if needed
+if (!require("tidyverse")) install.packages("tidyverse")
+if (!require("openxlsx")) install.packages("openxlsx")
+if (!require("ggpubr")) install.packages("ggpubr")
+
+```
+
+#Load Libraries
+```{r}
+library(tidyverse) #data manipulation
+library(openxlsx) #read and write .xlsx
+library(ggpubr) #multipanel plot
+```
+
+#Load Data
+```{r}
+all.grow.merge <- read.xlsx("~/GitHub/EAGER_growth/Outputs/all_grow_lake_join.xlsx") %>% 
+  mutate(age_group = as.factor(age_group))
+```
+
+#Variable correlations per species age class
+```{r}
+#growing degree days and mean annual surface temperature
+dd.temp.cor <- all.grow.merge %>% 
+  filter(!is.na(DD_mean), !is.na(surf_temp_year),
+         species %in% c("black_crappie", "bluegill", "brown_trout",
+                         "cisco", "common_white_sucker", "largemouth_bass",
+                         "northern_pike", "pumpkinseed_sunfish", "rainbow_trout",
+                         "rock_bass", "smallmouth_bass", "walleye",
+                         "yellow_perch")) %>% 
+  group_by(species, age_group) %>% 
+  summarise(r = cor(DD_mean, surf_temp_year))
+
+#mean correlation of mean annual surface temperature and growing degree days across species age groups
+mean(abs(dd.temp.cor$r), na.rm = T)
+
+#mean per species
+dd.temp.cor.spp.mean <- dd.temp.cor %>% 
+  filter(!is.na(r)) %>%
+  group_by(species) %>% 
+  summarize(mean = mean(r), sd = sd(r))
+```
+
+
+Export correlation tables
+```{r}
+#all species
+write.csv(dd.temp.cor, file = "Outputs/Tables/cor_dd_temp_all.csv")
+
+#speecies mean
+write.csv(dd.temp.cor.spp.mean, file = "Outputs/Tables/cor_dd_temp_spp_mean.csv")
+```
+
+#Covariate distributions per species age group
+Filter to only target species (species that have enough data to model)
+```{r}
+target.spp <- all.grow.merge %>% 
+  #species with enough data to model
+  filter(species %in% c("black_crappie", "bluegill", "brown_trout",
+                         "cisco", "common_white_sucker", "largemouth_bass",
+                         "northern_pike", "pumpkinseed_sunfish", "rainbow_trout",
+                         "rock_bass", "smallmouth_bass", "walleye",
+                         "yellow_perch"),
+         #no age class > 12 had enough data either, so removing those too
+         age_group %in% c(1:12))
+```
+
+##Surface Temp
+```{r}
+(surf.temp.dist.plot <- ggplot(data = target.spp, aes(x = surf_temp_year, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Mean Annual Water Surface Temperature")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/surf_temp_freqpoly_plot.tiff", 
+       plot = surf.temp.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                      
+
+```
+
+###Quantiles
+```{r}
+quantile(target.spp$surf_temp_year, na.rm = T)
+```
+##Degree Days
+```{r}
+(dd.dist.plot <- ggplot(data = target.spp, aes(x = DD_mean, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Mean Lifetime Growing Degree Days")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/dd_freqpoly_plot.tiff", 
+       plot = dd.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                       
+
+```
+
+###Quantiles
+```{r}
+quantile(target.spp$DD_mean, na.rm = T)
+```
+
+#Day of year
+```{r}
+(doy.dist.plot <- ggplot(data = target.spp, aes(x = doy, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Day of Year")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/doy_freqpoly_plot.tiff", 
+       plot = doy.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                       
+
+```
+
+Day of year per species per data type
+```{r}
+(doy.data.type.dist.plot <- ggplot(data = target.spp, aes(x = doy, color = Data_Type))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Day of Year")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Data Type"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/doy_data_type_freqpoly_plot.tiff", 
+       plot = doy.data.type.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                       
+
+```
+
+#Lake area
+```{r}
+(lake.area.dist.plot <- ggplot(data = target.spp, aes(x = logarea, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Log10 Lake Area (Ha)")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/lake_area_freqpoly_plot.tiff", 
+       plot = lake.area.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                       
+
+```
+
+#Max Depth
+```{r}
+(lake.depth.dist.plot <- ggplot(data = target.spp, aes(x = log_max_depth, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Log10 Lake Max Depth (m)")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/lake_depth_freqpoly_plot.tiff", 
+       plot = lake.depth.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                       
+
+```
+
+#Secchi Depth
+```{r}
+(secchi.dist.plot <- ggplot(data = target.spp, aes(x = mean_secchi_m, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Mean Secchi Depth (m)")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/secchi_freqpoly_plot.tiff", 
+       plot = secchi.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                       
+
+```
+
+#Wetlands
+```{r}
+(wetlands.dist.plot <- ggplot(data = target.spp, aes(x = wetlands, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Proportion of Wetland Land Cover")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/wetlands_freqpoly_plot.tiff", 
+       plot = wetlands.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                        
+
+```
+
+#Urban
+```{r}
+(urban.dist.plot <- ggplot(data = target.spp, aes(x = urban, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Proportion of Urban Land Cover")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/urban_freqpoly_plot.tiff", 
+       plot = urban.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                        
+
+```
+#Forests
+```{r}
+(forests.dist.plot <- ggplot(data = target.spp, aes(x = forests, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Proportion of Forested Land Cover")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/forests_freqpoly_plot.tiff", 
+       plot = forests.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                        
+
+```
+#Agriculture
+```{r}
+(ag.dist.plot <- ggplot(data = target.spp, aes(x = agriculture, color = age_group))+
+   geom_freqpoly()+
+   facet_wrap(~species, scales = "free_y")+
+   scale_color_viridis_d(end = 0.9)+
+   labs(y = "Count", x = "Proportion of Agricultural Land Cover")+
+   scale_y_continuous(expand = c(0,0))+
+   guides(color = guide_legend(title="Age Class"))+
+   theme_bw()+
+   theme(axis.text = element_text(size = 14),
+         axis.text.x = element_text(size = 14, angle = 45),
+         axis.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+         legend.title = element_text(size = 18),
+         strip.text = element_text(size = 14))
+)
+
+ggsave(filename = "Outputs/Figures/Data Exploration/agriculture_freqpoly_plot.tiff", 
+       plot = ag.dist.plot,
+       width = 400, height = 300, 
+       units = "mm", dpi = 300)                                        
+
+```
+
+# Climate variables through time
+```{r}
+(temp.yr.plot <- ggplot(data = target.spp, aes(x = begin_date_year, y = surf_temp_year, 
+                                           color = LAT_DD, fill = LAT_DD))+
+    geom_point()+
+    geom_smooth()+
+    scale_color_viridis_c(direction = -1)+
+    scale_fill_viridis_c(direction = -1)+
+    labs(y = "Surface Temperature", x = "Year")+
+    theme_bw()+
+    guides(fill = guide_legend(title = "Latitude"),
+           color = guide_legend(title = "Latitude"))
+)
+
+(dd.mean.yr.plot <- ggplot(data = target.spp, aes(x = begin_date_year, y = DD_mean, 
+                                              color = LAT_DD, fill = LAT_DD))+
+    geom_point()+
+    geom_smooth()+
+    scale_color_viridis_c(direction = -1)+
+    scale_fill_viridis_c(direction = -1)+
+    labs(y = "Mean Degree Days", x = "Year")+
+    theme_bw()+
+    guides(fill = guide_legend(title = "Latitude"),
+           color = guide_legend(title = "Latitude"))
+)
+
+(dd.yr.plot <- ggplot(data = target.spp, aes(x = begin_date_year, y = dd_year, 
+                                         color = LAT_DD, fill = LAT_DD))+
+    geom_point()+
+    geom_smooth()+
+    scale_color_viridis_c(direction = -1)+
+    scale_fill_viridis_c(direction = -1)+
+    labs(y = "Degree Days", x = "Year")+
+    theme_bw()+
+    guides(fill = guide_legend(title = "Latitude"),
+           color = guide_legend(title = "Latitude"))
+)
+
+(lat.yr.plot <- ggplot(data = target.spp, aes(x = begin_date_year, y = LAT_DD,
+                                          color = surf_temp_year, 
+                                          fill = surf_temp_year))+
+    geom_point()+
+    geom_smooth()+
+    scale_color_viridis_c()+
+    scale_fill_viridis_c()+
+    labs(y = "Latitude", x = "Year")+
+    theme_bw()+
+    guides(fill = guide_legend(title = "Surface Temperature"),
+           color = guide_legend(title = "Surface Temperature"))
+)
+
+climate.plot <- ggarrange(temp.yr.plot, dd.yr.plot, 
+                          dd.mean.yr.plot, lat.yr.plot,
+                          ncol = 1, nrow = 4, labels = "AUTO")
+climate.plot
+
+ggsave(filename = "Outputs/Figures/Data Exploration/climate_vars_year.tiff", climate.plot,
+       height = 250, width = 150, units = "mm", dpi = 300)
+```

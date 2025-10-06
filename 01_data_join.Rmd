@@ -1,0 +1,565 @@
+---
+title: "01_data_join"
+author: "Peter Flood and Katelyn King"
+date: "2024-03-13"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Load libraries
+```{r}
+library(openxlsx) #package to read in/out .xlsx files
+library(lubridate) #package for working with dates 
+library(openxlsx) #read in/out .xls files
+library(LAGOSNE) #source of secchi data
+library(tidyverse) #data management
+```
+
+#Load linking covariates
+Load data files that link different lake identifyers across data sets
+and points has longitude and latitude in decimanl degress
+```{r}
+#need this table to connect NHDids with the new_keys
+lake_link<-read.csv("~/GitHub/EAGER_growth/Data/new_key_comid_translate.csv") %>% #from Kevin (includes ~25 lakes that were updated with nhdids)
+  rename(new_key = NEW_KEY, nhdid = COMID) %>% 
+  dplyr::select(nhdid, new_key)
+
+#get lat/lons from Humpries table
+points<-read.csv("~/GitHub/EAGER_growth/Data/Humphries_modified.csv") %>%
+  rename(new_key = New_Key) %>% 
+  dplyr::select(new_key, LONG_DD, LAT_DD)
+#AGOS link
+#LAGOS lake IDs needed to link to land use land cover data
+#Also allows for incorporation of secchi depth
+
+lagoslink <- read.csv("~/GitHub/EAGER_growth/Data/snt_lagoslink.csv") %>% 
+  rename(new_key = New_Key, lagoslakeid = lagoslakei) %>% 
+  select(new_key, lagoslakeid) %>% 
+  distinct(new_key, .keep_all = TRUE)
+```
+
+#Contemporary data
+###Load data
+Contemporary age-at-length data
+```{r}
+#read in contemporary data
+contemporary.raw <- read.csv("~/GitHub/EAGER_growth/Data/All Lakes age data May2021.csv", header = T)
+levels(as.factor(contemporary.raw$Age_Class))
+```
+###Format contemporary data
+Convert Roman numerals to Arabic numerals
+```{r}
+contemporary.age.class <- contemporary.raw %>% 
+  #remove age class levels that I currently don't understand, are missing, or N/A
+  filter(!Age_Class %in% c("", "*", ".", "?", "0.2", "0.3", "0/2", "0/3", "0/4", 
+                           "1.1", "1.2", "1.3", "1.4", "1.5", "2.3", "8.1", "9.3", 
+                           "9.7", "N/A", "ripe", "spent"
+                           )) %>% 
+  mutate(Age_Class_adj = case_when( #reformat age class levels to be numeric integers in a new column called "Age_Class_adj"
+    Age_Class %in% c("0", "0+") ~ 0,                       
+    Age_Class %in% c("i", "1", "1", "1.0", "I", "I*", "I+", "l") ~ 1,
+    Age_Class %in% c("2", "2+", "II", "II*", "ll") ~ 2,
+    Age_Class %in% c("3", "III", "III*", "III+", "lll") ~ 3,
+    Age_Class %in% c("`IV", "4", "IV", "IV*") ~ 4,
+    Age_Class %in% c("5", "V", "V*") ~ 5,
+    Age_Class %in% c("6", "VI", "VI*") ~ 6,
+    Age_Class %in% c("7", "VII", "VII*") ~ 7,
+    Age_Class %in% c("VIII", "VIII*") ~ 8,
+    Age_Class %in% c("9", "IX", "IX*") ~ 9,
+    Age_Class %in% c("10", "X", "X*") ~ 10,
+    Age_Class %in% c("11", "XI", "XI*") ~ 11,
+    Age_Class %in% c("12", "XII", "XII*") ~ 12,
+    Age_Class %in% c("13", "XIII", "XIII*") ~ 13,
+    Age_Class %in% c("14", "XIV", "XIV*") ~ 14,
+    Age_Class %in% c("15", "XV") ~ 15,
+    Age_Class %in% c("XVI") ~ 16,
+    Age_Class %in% c("XVII") ~ 17,
+    Age_Class %in% c("XVIII") ~ 18,
+    Age_Class %in% c("XIX") ~ 19,
+    Age_Class %in% c("XX") ~ 20,
+    Age_Class %in% c("XXI") ~ 21,
+    Age_Class %in% c("XXII") ~ 22,
+    Age_Class %in% c("XXIII") ~ 23,
+    Age_Class %in% c("XXIV") ~ 24,
+    Age_Class %in% c("XXV") ~ 25,
+    Age_Class %in% c("XXVII") ~ 27,
+    T ~ as.numeric(Age_Class)
+))
+
+levels(as.factor(contemporary.age.class$Age_Class_adj))
+is.numeric(contemporary.age.class$Age_Class_adj)
+```
+
+Remove missing data and convert inches to millimeters
+```{r}
+contemporary.tl.mm <- contemporary.age.class %>% 
+  filter(!Total_Length_In_Inches %in% c("", NA, 0)) %>% #remove rows with missing or NA total lengths
+  mutate(TL_mm = Total_Length_In_Inches*25.4) #convert from inches to mm (1 in = 25.4 mm)
+```
+
+Remove extreme outliers (likely some data entry errors, cannot verify)
+```{r}
+contemporary.tl.mm.no.outliers <- contemporary.tl.mm %>%
+  group_by(Species_Code, Age_Class) %>% 
+  mutate(
+    lower_quantile = quantile(TL_mm, probs = 0.0001, na.rm = T),
+    upper_quantile = quantile(TL_mm, probs = 0.9999, na.rm = T)
+  ) %>% 
+  filter(TL_mm > lower_quantile, TL_mm < upper_quantile) %>% 
+  select(Species_Code, TL_mm, contains("quantile"), everything()) 
+```
+
+Average age-at-length per age class per sampling event
+```{r}
+#historic growth data are mean age_at_length per age class per sampling event
+#need to average contemporary data to match that
+contemporary.avg <- contemporary.tl.mm.no.outliers %>% 
+  #Some species have a strain associated with them, split strain into its own column
+  separate(Species_Code, into = c("Species_Code", "Species_Strain"), sep = " ") %>% #warning message results from not all species have a strain, it is ok
+  #remove data points that are not from lakes or impounds
+  filter(Survey_Type_Abbreviation == "InlandLake") %>% 
+  #combine beginning_effort_time stamp and collection_date to preserve begin and end dates to make historic growth data format
+  unite("Sampling_Dates", c(Beginning_Effort_Timestamp, Collection_Date),  sep = "-") %>% 
+  #group by covariates that designate a specific sampling event, species, and age class
+  group_by(Water_Body_Key, Survey_Number,
+           Sampling_Dates, Species_Code, Age_Class_adj) %>% 
+  #take the average TL in mm of those groups
+  summarize(length_mean_mm = mean(TL_mm),
+            length_min_mm = min(TL_mm),
+            length_max_mm = max(TL_mm))
+```
+###Species name join
+Load species code and names file
+```{r}
+species.codes <- read.csv("~/GitHub/EAGER_growth/Data/species_name_codes.csv", header = T) %>% 
+  select(Species, SNT, target.spp) %>% 
+  mutate(Species = case_when(
+    Species == "white sucker" ~ "common white sucker",
+    Species == "pumpkinseed" ~ "pumpkinseed sunfish",
+    Species == "lake trout " ~ "lake trout",
+    T ~ Species
+  ))
+```
+
+Join species names with contemporary data
+```{r}
+contemporary.target.spp <- contemporary.avg %>% 
+  left_join(species.codes, by = c("Species_Code" = "SNT")) %>% 
+  filter(target.spp == 1)
+```
+
+###Geographic info join
+Load geographic location data
+```{r}
+snt.lake.info <- read.csv("~/GitHub/EAGER_growth/Data/snt_lake_info.csv", header = T)
+max(snt.lake.info$Year) #data go to 2020
+```
+
+Find survey numbers in contemporary data not in snt_lake_info
+```{r}
+#survey numbers in contemporary data that are not in snt.lake.info
+missing.survey.no <- contemporary.tl.mm %>% 
+  filter(!Survey_Number %in% snt.lake.info$Survey_Number) %>% 
+  group_by(Survey_Number, Expr1002) %>% tally() %>% 
+  arrange(desc(Expr1002))
+
+missing.survey.full.df <- contemporary.tl.mm %>% 
+  filter(!Survey_Number %in% snt.lake.info$Survey_Number)
+
+missing.survey.no.snt <- missing.survey.no %>% filter(Expr1002 == "Status & Trends")
+```
+
+Join geo data with contemporary age-at-length
+```{r}
+contemporary.geo.join <- contemporary.target.spp %>% 
+  #split sampling_dates back into begin and end dates to match up with snt.lake.info
+  separate(Sampling_Dates, into = c("begin_date", "end_date"), sep = "-") %>% 
+ #join with snt.lake.info to bring in lat, long, and other covariates and lake identifiers
+  left_join(snt.lake.info, by = c("Water_Body_Key", "Survey_Number"))
+
+contemporary.renamed <- contemporary.geo.join %>% 
+  #split end date to match historic growth data format
+  separate(end_date, into = c("end_date_month", "end_date_day", "end_date_year"), sep = "/") %>% 
+  #split begin date to match historic growth data format
+  separate(begin_date, into = c("begin_date_month", "begin_date_day", "begin_date_year"), sep = "/") %>% 
+  mutate(Water_Body_Name = toupper(Water_Body_Name),
+         primary_county_name = toupper(primary_county_name),
+         species = gsub(" ", "_", Species)) %>% 
+  rename("new_key" = "New_Key", "lakename" = "Water_Body_Name", "county" = "primary_county_name", 
+         "age_group" = "Age_Class_adj") %>% 
+  ungroup() %>% 
+  select(new_key, lakename, county, species, age_group, contains("length"), contains("begin"), contains("end")) %>% 
+  select(-contains("Timestamp"))
+```
+
+Remove NA lake names & change month from numbers to words
+```{r}
+contemporary.no.na <- contemporary.renamed %>% 
+  filter(!is.na(lakename)) %>% 
+  #month in historic growth data is written out by month name, not by the number
+  mutate(end_date_month = case_when(
+    end_date_month == 1 ~ "January",
+    end_date_month == 2 ~ "February",
+    end_date_month == 3 ~ "March",
+    end_date_month == 4 ~ "April",
+    end_date_month == 5 ~ "May", 
+    end_date_month == 6 ~ "June",
+    end_date_month == 7 ~ "July",
+    end_date_month == 8 ~ "August",
+    end_date_month == 9 ~ "September",
+    end_date_month == 10 ~ "October",
+    end_date_month == 11 ~ "November",
+    end_date_month == 12 ~ "December"
+  ), 
+  begin_date_month = case_when(
+    begin_date_month == 1 ~ "January",
+    begin_date_month == 2 ~ "February",
+    begin_date_month == 3 ~ "March",
+    begin_date_month == 4 ~ "April",
+    begin_date_month == 5 ~ "May", 
+    begin_date_month == 6 ~ "June",
+    begin_date_month == 7 ~ "July",
+    begin_date_month == 8 ~ "August",
+    begin_date_month == 9 ~ "September",
+    begin_date_month == 10 ~ "October",
+    begin_date_month == 11 ~ "November",
+    begin_date_month == 12 ~ "December")
+  ) %>% 
+  mutate(begin_date_year = as.numeric(begin_date_year))
+```
+
+###Contemporary Secchi data
+Secchi data from DNR through Status and Trends (SNT) program
+```{r}
+snt_secchi <- read.csv("~/GitHub/EAGER_growth/Data/snt_secchi_2002_2020.csv") %>% 
+  dplyr::rename(new_key = New_Key) %>% 
+  dplyr::mutate(secchi_m = SECCHI_FT/3.281) %>% 
+  dplyr::select(-c(SECCHI_FT)) %>% 
+  group_by(new_key, Year) %>%
+  summarise_at(vars(secchi_m), list(mean_secchi_m = mean)) #get rid of onen duplicate 
+
+```
+
+###Contemporary land use land cover
+```{r}
+sntlulc <-
+  read.csv("~/GitHub/EAGER_growth/Data/sntlulc.csv") %>% 
+  mutate(
+    urban = Developed,
+    agriculture = Cultivated_Crops + Hay_Pasture + Herbaceous,
+    forests = Deciduous_Forest + Mixed_Forest + Evergreen_Forest + Shrub_Scrub,
+    wetlands = Woody_Wetlands + Emergent_Herbaceous_Wetlands + Open_Water + Unclassified,
+    sum = urban + agriculture + forests + wetlands,
+    urban2 = urban / sum,
+    agriculture2 = agriculture / sum,
+    forests2 = forests / sum,
+    wetlands2 = wetlands / sum  #change to a proportion
+  ) %>%
+  dplyr::select(lagoslakei, Year, urban2, agriculture2, forests2, wetlands2) %>%
+  dplyr::rename(
+    lagoslakeid = lagoslakei,
+    year = Year ,
+    urban = urban2,
+    agriculture = agriculture2,
+    forests = forests2,
+    wetlands = wetlands2
+  )
+
+```
+
+###Contemporary join
+```{r}
+all_contemporary <- left_join(contemporary.no.na, lake_link) %>% #match new_keys and nhdids 
+  left_join(points) %>% 
+  left_join(snt_secchi, by = c('new_key','begin_date_year' = 'Year')) %>% 
+  left_join(lagoslink) %>% 
+  left_join(sntlulc, by = c('lagoslakeid', 'begin_date_year' = 'year' )) %>% 
+  mutate(month = as.integer(factor(begin_date_month, levels = month.name))) %>% #convert month to numerical 
+  mutate(date = make_date(begin_date_year, month, begin_date_day), #make a date column from the year,month, day columns 
+         doy = yday(date)  #add day of year  
+  ) %>% 
+    mutate(
+      begin_date_year = as.numeric(begin_date_year),
+      begin_date_day = as.numeric(begin_date_day),
+      end_date_year = as.numeric(end_date_year),
+      end_date_day = as.numeric(end_date_day)
+    )
+```
+
+#Historic data
+###Load historic data
+Load and combine
+```{r}
+historic_grow <- bind_rows(
+  read.csv("~/GitHub/EAGER_growth/Data/grow_qaqc_27Nov2024.csv"), #historic data from MI DNR
+  read.csv("~/GitHub/EAGER_growth/Data/archive_scale_grow_2024-Nov-12.csv") #data transcribed from scale envelopes from MI DNR not in the other dataset
+)
+  
+
+```
+
+
+###Historic Secchi data
+LAGOS Secchi data
+```{r}
+lagos <- lagosne_load() #load the data and call it lagos
+query_lagos_names("secchi")
+epi_nutr <- lagos$epi_nutr
+secchi <- epi_nutr %>% 
+  dplyr::select(lagoslakeid, sampledate, secchi) %>% 
+  tidyr::drop_na(secchi)
+
+# Using samples collected between Jun 15 and Sep 15 (stratification period)
+#and before 2002 (data below from after 2002)
+# define time parameters
+last_year <- 2002
+first_day  <- '0615' #i.e., '0615' for Jun 15
+last_day   <- '0915'
+
+# convert sampledate to date format and create "monthday" column to filter by day
+secchi$sampledate   <- as.Date(secchi$sampledate, format="%m/%d/%Y")
+secchi$monthday     <- format(secchi$sampledate, format="%m%d")
+secchi$sampleyear     <- format(secchi$sampledate, format="%Y")
+
+secchi_subset <- secchi %>% 
+  filter(monthday >= first_day & monthday <= last_day) %>% 
+  filter(sampleyear < last_year) %>% 
+  group_by(lagoslakeid, sampleyear) %>% 
+  summarise(mean_secchi = round(mean(secchi), 3)) %>% 
+  mutate(#lagoslakeid = as.character(as.integer(lagoslakeid)),
+         sampleyear = as.numeric(sampleyear)
+         ) %>% 
+  rename(mean_secchi_m = mean_secchi)
+
+```
+
+
+###Historic land use and land cover
+```{r}
+file.list <- list.files("~/GitHub/EAGER_growth/Data/LULC", 
+                        pattern='*.xls', full.names = T) 
+df.list <- lapply(file.list, read_excel)
+names(df.list[[1]])
+df.list[1]
+year_names <- c(1938:1992)
+
+for (i in 1:55) {
+  
+  names(df.list[[i]])[4] <- 'Open_Water'
+  names(df.list[[i]])[5] <- 'Developed'
+  names(df.list[[i]])[6] <- 'Mining'
+  names(df.list[[i]])[7] <- 'Barren'
+  names(df.list[[i]])[8] <- 'Deciduous'
+  names(df.list[[i]])[9] <- 'Evergreen'
+  names(df.list[[i]])[10] <- 'Mixed'
+  names(df.list[[i]])[11] <- 'Grassland'
+  names(df.list[[i]])[12] <- 'Shrubland'
+  names(df.list[[i]])[13] <- 'AgLand'
+  names(df.list[[i]])[14] <- 'Pasture'
+  names(df.list[[i]])[15] <- 'HerbWetland'
+  names(df.list[[i]])[16] <- 'WoodWetland'
+  
+  df.list[[i]]$sum <- rowSums(df.list[[i]][,3:16])
+  df.list[[i]]$year <- year_names[i]
+  
+  
+}
+
+historic_lulc <- bind_rows(df.list)
+historic_lulc <- historic_lulc %>%
+  mutate(
+    urban  = Developed + Mining + Barren,
+    agriculture = AgLand + Pasture + Grassland,
+    forests =  Deciduous + Mixed + Evergreen + Shrubland,
+    wetlands =  WoodWetland + HerbWetland + Open_Water + VALUE_0,
+    sum =  forests + wetlands + urban + agriculture,
+    urban2 = urban / sum,
+    agriculture2 = agriculture / sum,
+    forests2 = forests / sum,
+    wetlands2 = wetlands / sum  #change to a proportion
+  ) %>%
+  dplyr::select(LAGOSLAKEI, year, urban2, agriculture2, forests2, wetlands2) %>%
+  dplyr::rename(
+    lagoslakeid = LAGOSLAKEI,
+    urban = urban2,
+    agriculture = agriculture2,
+    forests = forests2,
+    wetlands = wetlands2
+  ) %>%
+  mutate(lagoslakeid = as.numeric(lagoslakeid))
+```
+
+###Historic join
+```{r}
+all_historic <- left_join(historic_grow, lake_link) %>% 
+  left_join(lagoslink) %>% 
+  left_join(points) %>% 
+  left_join(secchi_subset, by = c('lagoslakeid','begin_date_year' = 'sampleyear')) %>% 
+  left_join(historic_lulc, by = c('lagoslakeid', 'begin_date_year' = 'year' )) %>% 
+  mutate(month = as.integer(factor(begin_date_month, levels = month.name))) %>% #convert month to numerical 
+  mutate(date = make_date(begin_date_year, month, begin_date_day), #make a date column from the year,month, day columns 
+         doy = yday(date)  #add day of year  
+  ) %>% 
+    mutate(
+      begin_date_year = as.numeric(begin_date_year),
+      begin_date_day = as.numeric(begin_date_day),
+      end_date_year = as.numeric(end_date_year),
+      end_date_day = as.numeric(end_date_day)
+    )
+```
+
+#Bind contemporary and historic
+Add column for data type to distinguise contemporary and historic data points
+```{r}
+all_grow <- bind_rows(
+  all_contemporary %>% mutate(Data_Type = "Contemporary"),
+  all_historic %>% mutate(Data_Type = "Historic")
+) %>% 
+  #create column to set up join with census data
+  mutate(decade = round(begin_date_year/10)*10)
+```
+
+#Load remaining covariates for both
+###Lake and climate data
+```{r}
+# get lake area  
+lake_area<-read.csv("~/GitHub/EAGER_growth/Data/lake_attributes.csv") %>%
+  dplyr::select(IHDLKID,  ACRES_IHD) %>%
+  rename(nhdid = IHDLKID, lake_area_ac=ACRES_IHD ) %>%
+  mutate(lake_area_ha=round(lake_area_ac/2.471,2)) %>% #change from acres to hectares 
+  select(nhdid, lake_area_ha)
+
+#get lake depths          
+lake_depth<-read.csv("~/GitHub/EAGER_growth/Data/lake_depth_2021.csv") %>%
+  dplyr::select(IHDID, MaxDepth_ft, MeanDepth_ft) %>% 
+  rename(nhdid = IHDID) %>%
+  mutate(max_depth_m = round(MaxDepth_ft/3.28, 2), 
+         mean_depth_m= round(MeanDepth_ft/3.28 ,2)) %>%     #change from feet to meters
+  select(nhdid, max_depth_m, mean_depth_m)  %>%
+  group_by(nhdid) %>%
+  slice_max(max_depth_m) %>%#use the max max depth for lakes that have two basins 
+  ungroup() %>% 
+  distinct(nhdid, .keep_all = TRUE) #5 lakes had the same max depth listed twice, get distinct rows for each lake 
+
+# modeled surface temp by year (depend on the year of the sample)
+surface_temp<-read.csv("~/GitHub/EAGER_growth/Data/lake_surface_temp.csv") %>%
+  group_by(IHDLKID) %>%
+  slice_max(HECTARES) %>% 
+  rename(nhdid = IHDLKID)%>% 
+  pivot_longer(                 #this makes all of the years into rows instead of columns 
+    cols= starts_with("TAVE_"),
+    names_to = "year", 
+    names_prefix = "TAVE_",
+    values_to = "surf_temp_year") %>% 
+  mutate(year = as.integer(as.character(year))) %>% 
+  select(nhdid, year, surf_temp_year) %>% 
+  ungroup()
+
+
+#DD by year 
+dd_temp<-read.csv("~/GitHub/EAGER_growth/Data/lake_degree_days_year.csv") %>%
+  select(-c(HECTARES, FETCH_M, ZMAX_M, ZAVE_M, D)) %>% 
+  group_by(IHDLKID) %>%
+  summarise_all(mean) %>% 
+  rename(nhdid = IHDLKID)%>% 
+  pivot_longer(                   #this makes all of the years into rows instead of columns 
+    cols= starts_with("DD_"),
+    names_to = "year", 
+    names_prefix = "DD_",
+    values_to = "dd_year") %>% 
+  mutate(year = as.integer(as.character(year))) %>% 
+  ungroup()
+
+```
+
+###Census data
+```{r}
+countypop_1940 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037017_SL050.csv") %>%
+  dplyr::select(Area.Name, Total.Population, Year)
+countypop_1950 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037020_SL050.csv")%>%
+  dplyr::select(Area.Name, Total.Population, Year)
+countypop_1960 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037022_SL050.csv") %>%
+  dplyr::select(Area.name, Total.Population, Year) %>% 
+  dplyr::rename(Area.Name = Area.name)
+countypop_1970 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037023_SL4601.csv")%>%
+  dplyr::select(Area.Name, Total.Population, Year)
+countypop_1980 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037024_SL11.csv")%>%
+  dplyr::select(Area.Name, Total.Population, Year)
+countypop_1990 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037025_SL050.csv")%>%
+  dplyr::select(Area.Name, Total.Population, Year)
+countypop_2000 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037026_SL050.csv")%>%
+  dplyr::select(Area.Name, Total.Population, Year)
+countypop_2010 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037027_SL050.csv")%>%
+  dplyr::select(Area.Name, Total.Population, Year)
+countypop_2020 <- read.csv("~/GitHub/EAGER_growth/Data/County Census/R13037029_SL050.csv")%>%
+  dplyr::select(Area.Name, X2020.Total.Population, Year) %>% 
+  dplyr::rename(Total.Population = X2020.Total.Population)
+#bind all the decades 
+countypop_all<-rbind(countypop_1940, countypop_1950, countypop_1960, countypop_1970, countypop_1980, countypop_1990, countypop_2000, countypop_2010, countypop_2020) %>% 
+  mutate(Area.Name = gsub(" County", "", Area.Name)) %>% 
+  mutate(county = tolower(Area.Name)) %>% 
+  dplyr::select(-c(Area.Name))
+```
+
+#Join lake, climate, census
+```{r}
+all_grow_lake_join <- left_join(all_grow, lake_depth) %>% 
+  left_join(lake_area) %>% 
+  left_join(surface_temp, by = c("nhdid" = "nhdid", "end_date_year" = "year")) %>% 
+  mutate(county = tolower(county)) %>% 
+  left_join(dd_temp, by = c("nhdid" = "nhdid", "end_date_year" = "year")) %>% 
+  left_join(countypop_all, by =c('decade' = 'Year', 'county' = "county")) %>% 
+  mutate(log_max_depth = log(max_depth_m),  #log transform 
+         logarea = log(lake_area_ha), 
+         logcounty = log(as.numeric(Total.Population)) #day of year 
+) %>% as.data.frame() #the loop in the next section only runs if this object is a df, not a tibble
+```
+
+
+Calculate mean degree days over the lifespan of individuals
+```{r}
+#creating a variable that is average dd of the lifetime of the fish 
+#DD has 3 columns nhdid, year, and DD 
+#take the sum of Degree Days of the equal nhdids AND the year before the year of the  data AND all the years greater than the year - the age group THEN divide the sum DD by age  
+all_grow_lake_join$DD_mean <- NA #create a new column called "DD_mean"
+
+for (i in 1:nrow(all_grow_lake_join)) {
+  #all_grow_lake_join[,42] is DD_mean
+  #dd_temp has 3 columns in this order: nhdid, year, dd_year
+  #all_grow_lake_join[,15] is nhdid
+  #all_grow_lake_join[,11] is begin_date_year
+  #all_grow_lake_join[,5] is age_group
+  
+  all_grow_lake_join[i, 43] <- #new column for DD_mean
+    sum(dd_temp[dd_temp[, 1] == all_grow_lake_join[i, 15] & #matching nhdid
+                  dd_temp[, 2] < all_grow_lake_join[i, 11] & 
+                  dd_temp[, 2] >= (all_grow_lake_join[i, 11] - all_grow_lake_join[i, 5]), 3]) / all_grow_lake_join[i, 5]
+  
+}
+
+all_grow_lake_join <- all_grow_lake_join %>% 
+  mutate(DD_mean = ifelse(DD_mean == 0, NA, DD_mean))
+```
+
+
+#Export 
+to outputs folder for future analyses
+```{r}
+#Export
+write.xlsx(all_grow_lake_join %>% 
+            select(-c(subject_id, comment, url_back, url_front)), #drop some extraneous columns
+           "~/GitHub/EAGER_growth/Outputs/all_grow_lake_join.xlsx")
+```
+
+
+
+

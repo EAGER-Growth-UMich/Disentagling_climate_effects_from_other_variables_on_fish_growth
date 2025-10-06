@@ -1,0 +1,3956 @@
+---
+title: "03_linear_models"
+author: "Peter Flood"
+date: "2024-09-03"
+output: 
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    toc: yes
+    toc_float: yes
+
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+getwd()
+```
+
+# Install Libraries
+```{r}
+#Install libraries if needed
+
+#Need to install one from GitHub
+
+if (!require("tidyverse")) install.packages("tidyverse")
+if (!require("openxlsx")) install.packages("openxlsx")
+if (!require("RVAideMemoire")) install.packages("RVAideMemoire")
+if (!require("DHARMa")) install.packages("DHARMa")
+if (!require("fitdistrplus")) install.packages("fitdistrplus")
+if (!require("logspline")) install.packages("logspline")
+if (!require("car")) install.packages("car")
+if (!require("effectsize")) install.packages("effectsize")
+if (!require("ggeffects")) install.packages("ggeffects")
+if (!require("marginaleffects")) install.packages("marginaleffects")
+if (!require("emmeans")) install.packages("emmeans")
+if (!require("ggpmisc")) install.packages("ggpmisc")
+if (!require("ggpubr")) install.packages("ggpubr")
+if (!require("ggrepel")) install.packages("ggrepel")
+if (!require("rstatix")) install.packages("rstatix")
+if (!require("brms")) install.packages("brms")
+if (!require("loo")) install.packages("loo")
+if (!require("MuMIn")) install.packages("MuMIn")
+if (!require("tidybayes")) install.packages("tidybayes")
+
+
+```
+
+
+# Load Libraries
+```{r}
+
+library(openxlsx) #read and write .xlsx
+library(RVAideMemoire) #used for testing lm model assumptions
+library(DHARMa) #checking model assumptions and output
+library(fitdistrplus) #insight into which distribution to use
+library(logspline) #k-s test for selected distribution 
+library(car) #partial regression plots
+library(effectsize) #calculate effect sizes
+library(ggeffects) #marginal effect plots
+library(marginaleffects) #marginal effects
+library(emmeans) #posthoc analyses
+library(ggpmisc) 
+library(ggpubr) #arranging multipanel plots
+library(ggrepel) #text labels on plots w/o overlapping
+library(rstatix) #used for emmeans wrappers 
+library(brms) #Bayesian modeling
+library(loo) #leave-one-out cross-validation of Bayesian models
+library(MuMIn) #multi-model selection
+library(tidyverse) #data manipulation
+library(tidybayes) #data manipulation
+
+```
+
+# Load Data
+```{r}
+all.grow.merge <- read.xlsx("~/GitHub/EAGER_growth/Outputs/all_grow_lake_join.xlsx") %>% 
+  mutate(age_group = as.factor(age_group))
+```
+
+## Format data
+Mean length per species per age class over the entire dataset
+```{r}
+mean.length.age.class <- all.grow.merge %>% 
+  group_by(species, age_group) %>% 
+  summarise(mean = mean(length_mean_mm, na.rm = T)) %>% 
+  mutate(Species = case_when(
+    species == "black_crappie" ~ "Black Crappie",
+    species == "bluegill" ~ "Bluegill",
+    species == "brown_trout" ~ "Brown Trout",
+    species == "cisco" ~ "Cisco",
+    species == "common_white_sucker" ~ "White Sucker",
+    species == "largemouth_bass" ~ "Largemouth Bass",
+    species == "northern_pike" ~ "Northern Pike",
+    species == "pumpkinseed_sunfish" ~ "Pumpkinseed Sunfish",
+    species == "rainbow_trout" ~ "Rainbow Trout",
+    species == "rock_bass" ~ "Rock Bass", 
+    species == "smallmouth_bass" ~ "Smallmouth Bass",
+    species == "walleye" ~ "Walleye",
+    species == "yellow_perch" ~ "Yellow Perch",
+    T ~ species
+  )) %>% 
+  rename(Age = age_group) 
+```
+
+# Linear Regressions
+Data may not conform well to model assumptions. The goal of these models is to ask whether or not a given species size class is increasing or decreasing in size through time. Not necessary to over interpret the exact amount of change, although we do report that, it should be taken with a grain of salt.
+
+## Black Crappie
+
+###Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+pomnig <- all.grow.merge %>% filter(species == "black_crappie") %>% 
+  filter(!age_group %in% c(12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea)) %>% 
+  mutate(age_group = fct_rev(age_group))
+
+#linear model
+pomnig.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = pomnig)
+summary(pomnig.lm)
+
+#calculate and interpret effect sizes
+eta_squared(pomnig.lm)
+#interpret(eta_squared(pomnig.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(pomnig.lm)
+
+#examine model fit
+testDispersion(pomnig.lm)
+
+simulation.output <- simulateResiduals(fittedModel = pomnig.lm)
+
+residuals(pomnig.lm)
+residuals(pomnig.lm, quantileFunction = qnorm)
+
+plot(pomnig.lm)
+```
+
+###Post-hoc comparisons
+```{r}
+#post-hoc comparisons
+pomnig.emm <- emmeans(pomnig.lm, ~ begin_date_year*age_group)
+pairs(pomnig.emm, simple = "age_group")
+test(pairs(pomnig.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# interpret(eta_squared(pomnig.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/pomnig_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+pomnig.slopes <- emtrends(pomnig.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+pomnig.slope.contrasts <- test(pomnig.slopes) %>% 
+  mutate(Species = "Black Crappie") %>% 
+  rename(Age = age_group)
+
+pomnig.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/pomnig_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(pomnig.length.year.plot <- ggplot(data = pomnig %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(pomnig.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/pomnig_pairwise_length_time_slopes.csv", row.names = F)
+
+(pomnig.marginal.plot <- ggpredict(pomnig.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 1000 - 0.35x", x = 2000, y = 350)+
+    # annotate(geom = "text", label = "y = 21 + 0.093x", x = 2000, y = 212)+
+    # annotate(geom = "text", label = "y = -64 + 0.13x", x = 2000, y = 199)+
+    # annotate(geom = "text", label = "y = 230 - 0.028x", x = 2000, y = 182)+
+    # annotate(geom = "text", label = "y = 610 - 0.23x", x = 2000, y = 160)+
+    # annotate(geom = "text", label = "y = 920 - 0.39x", x = 2000, y = 137)+
+    # annotate(geom = "text", label = "y = 1200 - 0.55x", x = 2000, y = 110)+
+    # annotate(geom = "text", label = "y = 1700 - 0.83x", x = 2000, y = 80)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/pomnig_marginal_effects_plot.tiff", 
+       pomnig.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+## Bluegill
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+lepmac <- all.grow.merge %>% filter(species == "bluegill") %>% 
+  filter(!age_group %in% c(12, 13, 18), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+lepmac.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = lepmac)
+summary(lepmac.lm)
+
+#calculate and interpret effect sizes
+eta_squared(lepmac.lm)
+#interpret(eta_squared(lepmac.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(lepmac.lm)
+
+#examine model fit
+testDispersion(lepmac.lm)
+
+simulation.output <- simulateResiduals(fittedModel = lepmac.lm)
+
+residuals(lepmac.lm)
+residuals(lepmac.lm, quantileFunction = qnorm)
+
+plot(lepmac.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+lepmac.emm <- emmeans(lepmac.lm, ~ begin_date_year*age_group)
+pairs(lepmac.emm, simple = "age_group")
+test(pairs(lepmac.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(lepmac.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/lepmac_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+lepmac.slopes <- emtrends(lepmac.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+lepmac.slope.contrasts <- test(lepmac.slopes) %>% 
+  mutate(Species = "Bluegill") %>% 
+  rename(Age = age_group)
+
+lepmac.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/lepmac_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(lepmac.length.year.plot <- ggplot(data = lepmac %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(lepmac.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/lepmac_pairwise_length_time_slopes.csv", row.names = F)
+
+(lepmac.marginal.plot <- ggpredict(lepmac.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 77 + 0.07x", x = 2000, y = 224)+
+    # annotate(geom = "text", label = "y = 21 + 0.093x", x = 2000, y = 212)+
+    # annotate(geom = "text", label = "y = -64 + 0.13x", x = 2000, y = 199)+
+    # annotate(geom = "text", label = "y = 230 - 0.028x", x = 2000, y = 182)+
+    # annotate(geom = "text", label = "y = 610 - 0.23x", x = 2000, y = 160)+
+    # annotate(geom = "text", label = "y = 920 - 0.39x", x = 2000, y = 137)+
+    # annotate(geom = "text", label = "y = 1200 - 0.55x", x = 2000, y = 110)+
+    # annotate(geom = "text", label = "y = 1700 - 0.83x", x = 2000, y = 80)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/lepmac_marginal_effects_plot.tiff", 
+       lepmac.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+## Brown Trout
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+saltru <- all.grow.merge %>% filter(species == "brown_trout") %>% 
+  filter(age_group %in% c(1, 2, 3, 4, 5), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+saltru.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = saltru)
+summary(saltru.lm)
+
+#calculate and interpret effect sizes
+eta_squared(saltru.lm)
+#interpret(eta_squared(saltru.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(saltru.lm)
+
+#examine model fit
+testDispersion(saltru.lm)
+
+simulation.output <- simulateResiduals(fittedModel = saltru.lm)
+
+residuals(saltru.lm)
+residuals(saltru.lm, quantileFunction = qnorm)
+
+plot(saltru.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+saltru.emm <- emmeans(saltru.lm, ~ begin_date_year*age_group)
+pairs(saltru.emm, simple = "age_group")
+test(pairs(saltru.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(saltru.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/saltru_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+saltru.slopes <- emtrends(saltru.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+saltru.slope.contrasts <- test(saltru.slopes) %>% 
+  mutate(Species = "Brown Trout") %>% 
+  rename(Age = age_group)
+
+saltru.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/saltru_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(saltru.length.year.plot <- ggplot(data = saltru %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+
+### Marginal Effects
+```{r}
+result <- predict_response(saltru.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/saltru_pairwise_length_time_slopes.csv", row.names = F)
+
+(saltru.marginal.plot <- ggpredict(saltru.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 3000 - 1.2x", x = 2000, y = 250)+
+    # annotate(geom = "text", label = "y = 2000 - 0.76x", x = 2000, y = 350)+
+    # annotate(geom = "text", label = "y = 1900 - 0.76x", x = 2000, y = 430)+
+    # annotate(geom = "text", label = "y = 3200 - 1.4x", x = 2000, y = 500)+
+    # annotate(geom = "text", label = "y = 4100 - 1.9x", x = 2000, y = 550)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/saltru_marginal_effects_plot.tiff", 
+       saltru.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+
+
+## Cisco
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+corart <- all.grow.merge %>% filter(species == "cisco") %>% 
+  filter(age_group %in% c(2, 3, 4, 5, 6, 7), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+corart.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = corart)
+summary(corart.lm)
+
+#calculate and interpret effect sizes
+eta_squared(corart.lm)
+#interpret(eta_squared(corart.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(corart.lm)
+
+#examine model fit
+testDispersion(corart.lm)
+
+simulation.output <- simulateResiduals(fittedModel = corart.lm)
+
+residuals(corart.lm)
+residuals(corart.lm, quantileFunction = qnorm)
+
+plot(corart.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+corart.emm <- emmeans(corart.lm, ~ begin_date_year*age_group)
+pairs(corart.emm, simple = "age_group")
+test(pairs(corart.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(corart.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/corart_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+corart.slopes <- emtrends(corart.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+corart.slope.contrasts <- test(corart.slopes) %>% 
+  mutate(Species = "Cisco") %>% 
+  rename(Age = age_group)
+
+corart.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/corart_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(corart.length.year.plot <- ggplot(data = corart %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+
+### Marginal Effects
+```{r}
+result <- predict_response(corart.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/corart_pairwise_length_time_slopes.csv", row.names = F)
+
+(corart.marginal.plot <- ggpredict(corart.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 1100 + 0.39x", x = 1970, y = 400)+
+    # annotate(geom = "text", label = "y = 340 + 0.01x", x = 1970, y = 375)+
+    # annotate(geom = "text", label = "y = -740 + 0.55x", x = 1970, y = 350)+
+    # annotate(geom = "text", label = "y = 1400 - 0.57x", x = 1980, y = 325)+
+    # annotate(geom = "text", label = "y = 860 - 0.29x", x = 1970, y = 310)+
+    # annotate(geom = "text", label = "y = 1700 - 0.75x", x = 1970, y = 275)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/corart_marginal_effects_plot.tiff", 
+       corart.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+
+
+## White Sucker
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+catcom <- all.grow.merge %>% filter(species == "common_white_sucker") %>% 
+  filter(age_group %in% c(1, 2, 3, 4, 5), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+catcom.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = catcom)
+summary(catcom.lm)
+
+#calculate and interpret effect sizes
+eta_squared(catcom.lm)
+#interpret(eta_squared(catcom.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(catcom.lm)
+
+#examine model fit
+testDispersion(catcom.lm)
+
+simulation.output <- simulateResiduals(fittedModel = catcom.lm)
+
+residuals(catcom.lm)
+residuals(catcom.lm, quantileFunction = qnorm)
+
+plot(catcom.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+catcom.emm <- emmeans(catcom.lm, ~ begin_date_year*age_group)
+pairs(catcom.emm, simple = "age_group")
+test(pairs(catcom.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(catcom.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/catcom_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+catcom.slopes <- emtrends(catcom.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+catcom.slope.contrasts <- test(catcom.slopes) %>% 
+  mutate(Species = "White Sucker") %>% 
+  rename(Age = age_group)
+
+catcom.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/catcom_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(catcom.length.year.plot <- ggplot(data = catcom %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(catcom.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/catcom_pairwise_length_time_slopes.csv", row.names = F)
+
+(catcom.marginal.plot <- ggpredict(catcom.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 2400 - 0.99x", x = 2000, y = 450)+
+    # annotate(geom = "text", label = "y = 4300 - 2x", x = 2000, y = 400)+
+    # annotate(geom = "text", label = "y = 4300 - 2x", x = 2000, y = 350)+
+    # annotate(geom = "text", label = "y = 3700 - 1.7x", x = 2000, y = 300)+
+    # annotate(geom = "text", label = "y = 2600 - 1.2x", x = 2000, y = 200)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/catcom_marginal_effects_plot.tiff", 
+       catcom.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+
+
+## Largemouth Bass
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+micsal <- all.grow.merge %>% filter(species == "largemouth_bass") %>% 
+  filter(!age_group %in% c(13, 14, 15, 16, 17, 18, 19, 20, 21, 22), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+micsal.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = micsal)
+summary(micsal.lm)
+
+#calculate and interpret effect sizes
+eta_squared(micsal.lm)
+#interpret(eta_squared(micsal.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(micsal.lm)
+
+#examine model fit
+testDispersion(micsal.lm)
+
+simulation.output <- simulateResiduals(fittedModel = micsal.lm)
+
+residuals(micsal.lm)
+residuals(micsal.lm, quantileFunction = qnorm)
+
+plot(micsal.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+micsal.emm <- emmeans(micsal.lm, ~ begin_date_year*age_group)
+pairs(micsal.emm, simple = "age_group")
+test(pairs(micsal.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(micsal.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/micsal_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+micsal.slopes <- emtrends(micsal.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+micsal.slope.contrasts <- test(micsal.slopes) %>% 
+  mutate(Species = "Largemouth Bass") %>% 
+  rename(Age = age_group)
+
+micsal.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/micsal_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(micsal.length.year.plot <- ggplot(data = micsal %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(micsal.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/micsal_pairwise_length_time_slopes.csv", row.names = F)
+
+(micsal.marginal.plot <- ggpredict(micsal.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 77 + 0.07x", x = 2000, y = 224)+
+    # annotate(geom = "text", label = "y = 21 + 0.093x", x = 2000, y = 212)+
+    # annotate(geom = "text", label = "y = -64 + 0.13x", x = 2000, y = 199)+
+    # annotate(geom = "text", label = "y = 230 - 0.028x", x = 2000, y = 182)+
+    # annotate(geom = "text", label = "y = 610 - 0.23x", x = 2000, y = 160)+
+    # annotate(geom = "text", label = "y = 920 - 0.39x", x = 2000, y = 137)+
+    # annotate(geom = "text", label = "y = 1200 - 0.55x", x = 2000, y = 110)+
+    # annotate(geom = "text", label = "y = 1700 - 0.83x", x = 2000, y = 80)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/micsal_marginal_effects_plot.tiff", 
+       micsal.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+
+
+## Northern Pike
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+esoluc <- all.grow.merge %>% filter(species == "northern_pike") %>% 
+  filter(!age_group %in% c(11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+esoluc.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = esoluc)
+summary(esoluc.lm)
+
+#calculate and interpret effect sizes
+eta_squared(esoluc.lm)
+#interpret(eta_squared(esoluc.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(esoluc.lm)
+
+#examine model fit
+testDispersion(esoluc.lm)
+
+simulation.output <- simulateResiduals(fittedModel = esoluc.lm)
+
+residuals(esoluc.lm)
+residuals(esoluc.lm, quantileFunction = qnorm)
+
+plot(esoluc.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+esoluc.emm <- emmeans(esoluc.lm, ~ begin_date_year*age_group)
+pairs(esoluc.emm, simple = "age_group")
+test(pairs(esoluc.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(esoluc.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/esoluc_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+esoluc.slopes <- emtrends(esoluc.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+esoluc.slope.contrasts <- test(esoluc.slopes) %>% 
+  mutate(Species = "Northern Pike") %>% 
+  rename(Age = age_group)
+
+esoluc.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/esoluc_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(esoluc.length.year.plot <- ggplot(data = esoluc %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(esoluc.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/esoluc_pairwise_length_time_slopes.csv", row.names = F)
+
+(esoluc.marginal.plot <- ggpredict(esoluc.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 1.3E4 - 5.5x", x = 1950, y = 1300)+
+    # annotate(geom = "text", label = "y = 9.1E3 - 4.1x", x = 1950, y = 1150)+
+    # annotate(geom = "text", label = "y = 8.9E3 - 4.1x", x = 1950, y = 1050)+
+    # annotate(geom = "text", label = "y = 6.5E3 - 2.9x", x = 1950, y = 925)+
+    # annotate(geom = "text", label = "y = 5.2E3 - 2.2x", x = 1950, y = 850)+
+    # annotate(geom = "text", label = "y = 3.4E3 - 1.4x", x = 1950, y = 750)+
+    # annotate(geom = "text", label = "y = 2.6E3 - 1x", x = 1950, y = 680)+
+    # annotate(geom = "text", label = "y = 1.8E3 - 0.64x", x = 1950, y = 615)+
+    # annotate(geom = "text", label = "y = 2.4E3 - 0.99x", x = 1950, y = 550)+
+    # annotate(geom = "text", label = "y = 3.2E3 - 1.4x", x = 1950, y = 460)+
+    # annotate(geom = "text", label = "y = 4.3E3 - 2.1x", x = 1950, y = 375)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/esoluc_marginal_effects_plot.tiff", 
+       esoluc.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+## Pumpkinseed Sunfish
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+lepgib <- all.grow.merge %>% filter(species == "pumpkinseed_sunfish") %>% 
+  filter(age_group %in% c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+lepgib.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = lepgib)
+summary(lepgib.lm)
+
+#calculate and interpret effect sizes
+eta_squared(lepgib.lm)
+#interpret(eta_squared(lepgib.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(lepgib.lm)
+
+#examine model fit
+testDispersion(lepgib.lm)
+
+simulation.output <- simulateResiduals(fittedModel = lepgib.lm)
+
+residuals(lepgib.lm)
+residuals(lepgib.lm, quantileFunction = qnorm)
+
+plot(lepgib.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+lepgib.emm <- emmeans(lepgib.lm, ~ begin_date_year*age_group)
+pairs(lepgib.emm, simple = "age_group")
+test(pairs(lepgib.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(lepgib.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/lepgib_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+lepgib.slopes <- emtrends(lepgib.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+lepgib.slope.contrasts <- test(lepgib.slopes) %>% 
+  mutate(Species = "Pumpkinseed Sunfish") %>% 
+  rename(Age = age_group)
+
+lepgib.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/lepgib_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(lepgib.length.year.plot <- ggplot(data = lepgib %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(lepgib.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/lepgib_pairwise_length_time_slopes.csv", row.names = F)
+
+(lepgib.marginal.plot <- ggpredict(lepgib.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = -220 + 0.22x", x = 1990, y = 220)+
+    # annotate(geom = "text", label = "y = -1.7 + 0.11x", x = 1990, y = 213)+
+    # annotate(geom = "text", label = "y = -64 + 0.13x", x = 1990, y = 205)+
+    # annotate(geom = "text", label = "y = 300 + 0.25x", x = 1990, y = 195)+
+    # annotate(geom = "text", label = "y = -170 + 0.18x", x = 1990, y = 185)+
+    # annotate(geom = "text", label = "y = -140 + 0.15x", x = 1990, y = 173)+
+    # annotate(geom = "text", label = "y = 42 + 0.06x", x = 1990, y = 160)+
+    # annotate(geom = "text", label = "y = 320 - 0.09x", x = 1990, y = 140)+
+    # annotate(geom = "text", label = "y = 850 - 0.37x", x = 1990, y = 115)+
+    # annotate(geom = "text", label = "y = 1.4E3 - 0.67x", x = 1990, y = 90)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/lepgib_marginal_effects_plot.tiff", 
+       lepgib.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+## Rainbow Trout
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+oncmyk <- all.grow.merge %>% filter(species == "rainbow_trout") %>% 
+  filter(age_group %in% c(1, 2, 3, 4), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+oncmyk.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = oncmyk)
+summary(oncmyk.lm)
+
+#calculate and interpret effect sizes
+eta_squared(oncmyk.lm)
+#interpret(eta_squared(oncmyk.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(oncmyk.lm)
+
+#examine model fit
+testDispersion(oncmyk.lm)
+
+simulation.output <- simulateResiduals(fittedModel = oncmyk.lm)
+
+residuals(oncmyk.lm)
+residuals(oncmyk.lm, quantileFunction = qnorm)
+
+plot(oncmyk.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+oncmyk.emm <- emmeans(oncmyk.lm, ~ begin_date_year*age_group)
+pairs(oncmyk.emm, simple = "age_group")
+test(pairs(oncmyk.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(oncmyk.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/oncmyk_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+oncmyk.slopes <- emtrends(oncmyk.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+oncmyk.slope.contrasts <- test(oncmyk.slopes) %>% 
+  mutate(Species = "Rainbow Trout") %>% 
+  rename(Age = age_group)
+
+oncmyk.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/oncmyk_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(oncmyk.length.year.plot <- ggplot(data = oncmyk %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(oncmyk.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/oncmyk_pairwise_length_time_slopes.csv", row.names = F)
+
+(oncmyk.marginal.plot <- ggpredict(oncmyk.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = -5.8E3 + 3.2x", x = 2000, y = 600)+
+    # annotate(geom = "text", label = "y = -2.2E3 + 1.3x", x = 2000, y = 475)+
+    # annotate(geom = "text", label = "y = -1.3E3 + 0.82x", x = 2000, y = 380)+
+    # annotate(geom = "text", label = "y = 920 - 0.33x", x = 2000, y = 285)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/oncmyk_marginal_effects_plot.tiff", 
+       oncmyk.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+## Rock Bass
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+ambrup <- all.grow.merge %>% filter(species == "rock_bass") %>% 
+  filter(age_group %in% c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+ambrup.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = ambrup)
+summary(ambrup.lm)
+
+#calculate and interpret effect sizes
+eta_squared(ambrup.lm)
+#interpret(eta_squared(ambrup.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(ambrup.lm)
+
+#examine model fit
+testDispersion(ambrup.lm)
+
+simulation.output <- simulateResiduals(fittedModel = ambrup.lm)
+
+residuals(ambrup.lm)
+residuals(ambrup.lm, quantileFunction = qnorm)
+
+plot(ambrup.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+ambrup.emm <- emmeans(ambrup.lm, ~ begin_date_year*age_group)
+pairs(ambrup.emm, simple = "age_group")
+test(pairs(ambrup.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(ambrup.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/ambrup_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+ambrup.slopes <- emtrends(ambrup.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+ambrup.slope.contrasts <- test(ambrup.slopes) %>% 
+  mutate(Species = "Rock Bass") %>% 
+  rename(Age = age_group)
+
+ambrup.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/ambrup_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(ambrup.length.year.plot <- ggplot(data = ambrup %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(ambrup.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/ambrup_pairwise_length_time_slopes.csv", row.names = F)
+
+(ambrup.marginal.plot <- ggpredict(ambrup.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 940 - 0.33x", x = 1990, y = 285)+
+    # annotate(geom = "text", label = "y = 760 - 0.25x", x = 1990, y = 270)+
+    # annotate(geom = "text", label = "y = 430 - 0.09x", x = 1990, y = 258)+
+    # annotate(geom = "text", label = "y = 390 - 0.08x", x = 1990, y = 245)+
+    # annotate(geom = "text", label = "y = 500 - 0.14x", x = 1990, y = 230)+
+    # annotate(geom = "text", label = "y = 210 - 0.004x", x = 1990, y = 215)+
+    # annotate(geom = "text", label = "y = 16 + 0.09x", x = 1990, y = 198)+
+    # annotate(geom = "text", label = "y = 430 - 0.13x", x = 1990, y = 170)+
+    # annotate(geom = "text", label = "y = 580 - 0.22x", x = 1990, y = 145)+
+    # annotate(geom = "text", label = "y = 940 - 0.42x", x = 1990, y = 125)+
+    # annotate(geom = "text", label = "y = 1.8E3 - 0.85x", x = 1990, y = 90)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/ambrup_marginal_effects_plot.tiff", 
+       ambrup.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+
+
+## Smallmouth Bass
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+micdol <- all.grow.merge %>% filter(species == "smallmouth_bass") %>% 
+  filter(age_group %in% c(0:10), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+micdol.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = micdol)
+summary(micdol.lm)
+
+#calculate and interpret effect sizes
+eta_squared(micdol.lm)
+#interpret(eta_squared(micdol.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(micdol.lm)
+
+#examine model fit
+testDispersion(micdol.lm)
+
+simulation.output <- simulateResiduals(fittedModel = micdol.lm)
+
+residuals(micdol.lm)
+residuals(micdol.lm, quantileFunction = qnorm)
+
+plot(micdol.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+micdol.emm <- emmeans(micdol.lm, ~ begin_date_year*age_group)
+pairs(micdol.emm, simple = "age_group")
+test(pairs(micdol.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(micdol.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/micdol_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+micdol.slopes <- emtrends(micdol.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+micdol.slope.contrasts <- test(micdol.slopes) %>% 
+  mutate(Species = "Smallmouth Bass") %>% 
+  rename(Age = age_group)
+
+micdol.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/micdol_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(micdol.length.year.plot <- ggplot(data = micdol %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(micdol.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/micdol_pairwise_length_time_slopes.csv", row.names = F)
+
+(micdol.marginal.plot <- ggpredict(micdol.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 77 + 0.07x", x = 2000, y = 224)+
+    # annotate(geom = "text", label = "y = 21 + 0.093x", x = 2000, y = 212)+
+    # annotate(geom = "text", label = "y = -64 + 0.13x", x = 2000, y = 199)+
+    # annotate(geom = "text", label = "y = 230 - 0.028x", x = 2000, y = 182)+
+    # annotate(geom = "text", label = "y = 610 - 0.23x", x = 2000, y = 160)+
+    # annotate(geom = "text", label = "y = 920 - 0.39x", x = 2000, y = 137)+
+    # annotate(geom = "text", label = "y = 1200 - 0.55x", x = 2000, y = 110)+
+    # annotate(geom = "text", label = "y = 1700 - 0.83x", x = 2000, y = 80)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/micdol_marginal_effects_plot.tiff", 
+       micdol.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+
+
+## Walleye
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+sanvit <- all.grow.merge %>% filter(species == "walleye") %>% 
+  filter(age_group %in% c(0:12), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+sanvit.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = sanvit)
+summary(sanvit.lm)
+
+#calculate and interpret effect sizes
+eta_squared(sanvit.lm)
+#interpret(eta_squared(sanvit.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(sanvit.lm)
+
+#examine model fit
+testDispersion(sanvit.lm)
+
+simulation.output <- simulateResiduals(fittedModel = sanvit.lm)
+
+residuals(sanvit.lm)
+residuals(sanvit.lm, quantileFunction = qnorm)
+
+plot(sanvit.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+sanvit.emm <- emmeans(sanvit.lm, ~ begin_date_year*age_group)
+pairs(sanvit.emm, simple = "age_group")
+test(pairs(sanvit.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(sanvit.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/sanvit_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+sanvit.slopes <- emtrends(sanvit.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+sanvit.slope.contrasts <- test(sanvit.slopes) %>% 
+  mutate(Species = "Walleye") %>% 
+  rename(Age = age_group)
+
+sanvit.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/sanvit_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(sanvit.length.year.plot <- ggplot(data = sanvit %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(sanvit.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/sanvit_pairwise_length_time_slopes.csv", row.names = F)
+
+(sanvit.marginal.plot <- ggpredict(sanvit.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 77 + 0.07x", x = 2000, y = 224)+
+    # annotate(geom = "text", label = "y = 21 + 0.093x", x = 2000, y = 212)+
+    # annotate(geom = "text", label = "y = -64 + 0.13x", x = 2000, y = 199)+
+    # annotate(geom = "text", label = "y = 230 - 0.028x", x = 2000, y = 182)+
+    # annotate(geom = "text", label = "y = 610 - 0.23x", x = 2000, y = 160)+
+    # annotate(geom = "text", label = "y = 920 - 0.39x", x = 2000, y = 137)+
+    # annotate(geom = "text", label = "y = 1200 - 0.55x", x = 2000, y = 110)+
+    # annotate(geom = "text", label = "y = 1700 - 0.83x", x = 2000, y = 80)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/sanvit_marginal_effects_plot.tiff", 
+       sanvit.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+
+
+## Yellow Perch
+
+### Model
+```{r}
+#filter data for only Black Crappie, Pomooxis nigromaculatus 
+perfla <- all.grow.merge %>% filter(species == "yellow_perch") %>% 
+  filter(age_group %in% c(0:11), #match age groups in BRTs
+         !is.na(age_group), !is.na(begin_date_year), !is.na(length_mean_mm),
+         !is.na(log_max_depth), !is.na(logarea))
+
+#linear model
+perfla.lm <- lm(length_mean_mm ~ begin_date_year*age_group + log_max_depth + logarea + doy, data = perfla)
+summary(perfla.lm)
+
+#calculate and interpret effect sizes
+eta_squared(perfla.lm)
+#interpret(eta_squared(perfla.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(perfla.lm)
+
+#examine model fit
+testDispersion(perfla.lm)
+
+simulation.output <- simulateResiduals(fittedModel = perfla.lm)
+
+residuals(perfla.lm)
+residuals(perfla.lm, quantileFunction = qnorm)
+
+plot(perfla.lm)
+```
+
+### Post-hoc comparisons
+```{r}
+perfla.emm <- emmeans(perfla.lm, ~ begin_date_year*age_group)
+pairs(perfla.emm, simple = "age_group")
+test(pairs(perfla.emm, by = "begin_date_year"), by = NULL, adjust = "mvt")
+
+#export tables
+# #interpret(eta_squared(perfla.lm), rules = "cohen1992") %>%
+#   write.csv(file = "Outputs/Tables/perfla_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+perfla.slopes <- emtrends(perfla.lm, ~age_group, var = "begin_date_year")
+# Compare estimated slopes to 0
+perfla.slope.contrasts <- test(perfla.slopes) %>% 
+  mutate(Species = "Yellow Perch") %>% 
+  rename(Age = age_group)
+
+perfla.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/perfla_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(perfla.length.year.plot <- ggplot(data = perfla %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(perfla.lm, c("begin_date_year", "age_group"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/perfla_pairwise_length_time_slopes.csv", row.names = F)
+
+(perfla.marginal.plot <- ggpredict(perfla.lm, terms = c("begin_date_year", "age_group")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 77 + 0.07x", x = 2000, y = 224)+
+    # annotate(geom = "text", label = "y = 21 + 0.093x", x = 2000, y = 212)+
+    # annotate(geom = "text", label = "y = -64 + 0.13x", x = 2000, y = 199)+
+    # annotate(geom = "text", label = "y = 230 - 0.028x", x = 2000, y = 182)+
+    # annotate(geom = "text", label = "y = 610 - 0.23x", x = 2000, y = 160)+
+    # annotate(geom = "text", label = "y = 920 - 0.39x", x = 2000, y = 137)+
+    # annotate(geom = "text", label = "y = 1200 - 0.55x", x = 2000, y = 110)+
+    # annotate(geom = "text", label = "y = 1700 - 0.83x", x = 2000, y = 80)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/perfla_marginal_effects_plot.tiff", 
+       perfla.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+# All species marginal effects plot
+```{r}
+all.spp.marginal.effects <- ggarrange(corart.marginal.plot,
+                                      oncmyk.marginal.plot,
+                                      saltru.marginal.plot,
+                                      perfla.marginal.plot,
+                                      esoluc.marginal.plot,
+                                      sanvit.marginal.plot,
+                                      catcom.marginal.plot,
+                                      pomnig.marginal.plot,
+                                      ambrup.marginal.plot,
+                                      micdol.marginal.plot,
+                                      lepgib.marginal.plot,
+                                      lepmac.marginal.plot,
+                                      common.legend = T,
+                                      legend = "right")
+
+all.spp.marginal.effects
+
+salmond.marginal.effects <- ggarrange(corart.marginal.plot,
+                                      oncmyk.marginal.plot,
+                                      saltru.marginal.plot,
+                                      ncol = 1,
+                                      common.legend = T,
+                                      legend = "right")
+```
+
+
+# Synthesis Plots Across Species
+
+Create tibble of slopes of all species size classes
+```{r}
+#extracting output from marginal effect plots w/ equations
+all.slopes <- tibble(
+  Species = c(
+    rep("Rock Bass", 11),
+    rep("Cisco", 6),
+    rep("Northern Pike", 11),
+    rep("Pumpkinseed Sunfish", 10),
+    rep("Bluegill", 12),
+    rep("Smallmouth Bass", 11),
+    rep("Largemouth Bass", 13),
+    rep("Rainbow Trout", 4),
+    rep("Yellow Perch", 12),
+    rep("Black Crappie", 12),
+    rep("Brown Trout", 5),
+    rep("Walleye", 13),
+    rep("White Sucker", 5)
+  ),
+  Age = c(
+    c(1:11), #Rock Bass
+    c(2:7), #Cisco
+    c(0:10), #Northern Pike
+    c(1:10), #Pumpkinseed Sunfish
+    c(0:11), #Bluegill
+    c(0:10), #Smallmouth Bass
+    c(0:12), #Largemouth Bass
+    c(1:4), #Rainbow Trout
+    c(0:11), #Yellow Perch
+    c(0:11), #Black Crappie
+    c(1:5), #Brown Trout
+    c(0:12), #Walleye
+    c(1:5) #White Sucker
+  ),
+  `Thermal Guild` = c(
+    rep("Cool", 11), #Rock Bass
+    rep("Cold", 6), #Cisco
+    rep("Cool", 11), #Northern Pike
+    rep("Warm", 10), #Pumpkinseed Sunfish
+    rep("Warm", 12), #Bluegill
+    rep("Warm", 11), #Smallmouth Bass
+    rep("Warm", 13), #Largemouth Bass
+    rep("Cold", 4), #Rainbow Trout
+    rep("Cool", 12), #Yellow Perch
+    rep("Cool", 12), #Black Crappie
+    rep("Cold", 5), #Brown Trout
+    rep("Cool", 13), #Walleye
+    rep("Cool", 5) #White Sucker
+    ),
+  `Trophic Guild` = c(
+    rep("Inv/Carn", 11), #Rock Bass
+    rep("Inv/Plank", 6), #Cisco
+    rep("Carn", 11), #Northern Pike
+    rep("Inv/Carn", 10), #Pumpkinseed Sunfish
+    rep("Inv", 12), #Bluegill
+    rep("Inv/Carn", 11), #Smallmouth Bass
+    rep("Inv/Carn", 13), #Largemouth Bass
+    rep("Inv/Carn", 4), #Rainbow Trout
+    rep("Inv/Carn", 12), #Yellow Perch
+    rep("Inv/Carn", 12), #Black Crappie
+    rep("Inv/Carn", 5), #Brown Trout
+    rep("Inv/Carn", 13), #Walleye
+    rep("Inv/Det", 5) #White Sucker
+  )
+)  %>% 
+  mutate(
+         `Life Stage` = case_when(
+           Species == "Black Crappie" & Age <= 3 ~ "Juvenile",
+           Species == "Black Crappie" & Age > 3 ~ "Adult",
+           Species == "White Sucker" & Age <= 4 ~ "Juvenile",
+           Species == "White Sucker" & Age > 4 ~ "Adult",
+           Species == "Cisco" & Age <= 6 ~ "Juvenile",
+           Species == "Cisco" & Age > 6 ~ "Adult",
+           Species == "Northern Pike" & Age <= 4 ~ "Juvenile",
+           Species == "Northern Pike" & Age > 4 ~ "Adult",
+           Species == "Bluegill" & Age <= 4 ~ "Juvenile",
+           Species == "Bluegill" & Age > 4 ~ "Adult",
+           Species == "Smallmouth Bass" & Age <= 5 ~ "Juvenile",
+           Species == "Smallmouth Bass" & Age > 5 ~ "Adult",
+           Species == "Largemouth Bass" & Age <= 5 ~ "Juvenile",
+           Species == "Largemouth Bass" & Age > 5 ~ "Adult",
+           Species == "Rainbow Trout" & Age <= 5 ~ "Juvenile",
+           Species == "Rainbow Trout" & Age > 5 ~ "Adult",
+           Species == "Black Crappie" & Age <= 3 ~ "Juvenile",
+           Species == "Black Crappie" & Age > 3 ~ "Adult",
+           Species == "Yellow Perch" & Age <= 4 ~ "Juvenile",
+           Species == "Yellow Perch" & Age > 4 ~ "Adult",
+           Species == "Pumpkinseed Sunfish" & Age <= 3 ~ "Juvenile",
+           Species == "Pumpkinseed Sunfish" & Age > 3 ~ "Adult",
+           Species == "Rock Bass" & Age <= 5 ~ "Juvenile",
+           Species == "Rock Bass" & Age > 5 ~ "Adult",
+           Species == "Brown Trout" & Age <= 5 ~ "Juvenile",
+           Species == "Brown Trout" & Age > 5 ~ "Adult",
+           Species == "Walleye" & Age <= 5 ~ "Juvenile",
+           Species == "Walleye" & Age > 5 ~ "Adult"
+         ), Age = as.factor(Age)) %>% 
+  left_join(mean.length.age.class %>% 
+              rename(mean_length = mean), 
+            by = c("Species", "Age")) %>% 
+  left_join(
+    bind_rows(
+      pomnig.slope.contrasts,
+      lepmac.slope.contrasts,
+      saltru.slope.contrasts,
+      corart.slope.contrasts,
+      catcom.slope.contrasts,
+      micsal.slope.contrasts,
+      esoluc.slope.contrasts,
+      lepgib.slope.contrasts,
+      oncmyk.slope.contrasts,
+      ambrup.slope.contrasts,
+      micdol.slope.contrasts,
+      sanvit.slope.contrasts,
+      perfla.slope.contrasts
+    ) %>% 
+      rename(Slope = begin_date_year.trend),
+    by = c("Species", "Age")
+  ) %>% 
+  mutate(`Percent Change` = (Slope/mean_length)*100,
+         `p-value` = if_else(p.value <= 0.05, "\u2264 0.05", "> 0.05"),
+         spp_code = case_when(
+           Species == "Black Crappie" ~ "BCR",
+           Species == "Bluegill" ~ "BLG", 
+           Species == "Brown Trout" ~ "BNT",
+           Species == "Cisco" ~ "CIS",
+           Species == "Largemouth Bass" ~ "LMB",
+           Species == "Northern Pike" ~ "NOP",
+           Species == "Pumpkinseed Sunfish" ~ "PSF",
+           Species == "Rainbow Trout" ~ "RBT",
+           Species == "Rock Bass" ~ "RKB",
+           Species == "Smallmouth Bass" ~ "SMB",
+           Species == "Walleye" ~ "WAE",
+           Species == "White Sucker" ~ "CWS",
+           Species == "Yellow Perch" ~ "YEP"
+         ),
+         FTP = case_when(
+           Species == "Black Crappie" ~ 23.4,
+           Species == "Bluegill" ~ 30.2, 
+           Species == "Brown Trout" ~ 15.7,
+           Species == "Cisco" ~ 12.4,
+           Species == "Largemouth Bass" ~ 28.6,
+           Species == "Northern Pike" ~ 20.7,
+           Species == "Pumpkinseed Sunfish" ~ 27.7,
+           Species == "Rainbow Trout" ~ 15.5,
+           Species == "Rock Bass" ~ 24.9,
+           Species == "Smallmouth Bass" ~ 25.0,
+           Species == "Walleye" ~ 22.5,
+           Species == "White Sucker" ~ 23.4,
+           Species == "Yellow Perch" ~ 17.6
+         ),
+         CTmax = case_when(
+           Species == "Black Crappie" ~ 34.9,
+           Species == "Bluegill" ~ 40.2, 
+           Species == "Brown Trout" ~ 28.3,
+           Species == "Cisco" ~ 26.9,
+           Species == "Largemouth Bass" ~ 38.4,
+           Species == "Northern Pike" ~ 32.6,
+           Species == "Pumpkinseed Sunfish" ~ 37.6,
+           Species == "Rainbow Trout" ~ 22.1,
+           Species == "Rock Bass" ~ 36.0,
+           Species == "Smallmouth Bass" ~ 36.3,
+           Species == "Walleye" ~ 23.4,
+           Species == "White Sucker" ~ 31.6,
+           Species == "Yellow Perch" ~ 35.0
+         ),
+         Species = fct_reorder(Species, FTP),
+         scaled_slope = scale(Slope),
+         log_slope = log(Slope+abs(min(Slope))+1)
+         )
+
+#write out reduced version of the table
+write.csv(all.slopes %>% 
+            select(-c(`Trophic Guild`, species, `p-value`, spp_code, scaled_slope, log_slope)),
+            file = "Outputs/Tables/all_slopes.csv",
+          row.names = F)
+```
+
+Some summary statistics
+```{r}
+#mean slope per thermal guild
+mean.mm.yr.thermal.guild <- all.slopes %>% 
+  filter(`p-value` == "≤ 0.05") %>% 
+  group_by(`Thermal Guild`) %>% 
+  summarise(mean_Slope = mean(Slope), mean_Percent = mean(`Percent Change`))
+
+#per species
+mean.mm.yr.species <- all.slopes %>% 
+  filter(`p-value` == "≤ 0.05") %>% 
+  group_by(Species) %>% 
+  summarise(mean_Slope = mean(Slope), mean_Percent = mean(`Percent Change`))
+
+mean.mm.yr.species.lifestage <- all.slopes %>% 
+  filter(`p-value` == "≤ 0.05") %>% 
+  group_by(Species, `Life Stage`) %>% 
+  summarise(mean_Slope = mean(Slope), mean_Percent = mean(`Percent Change`))
+
+mean.mm.year.life.stage <- all.slopes %>% 
+  filter(`p-value` == "≤ 0.05") %>% 
+  group_by(`Thermal Guild`, `Life Stage`) %>% 
+  summarise(mean_Slope = mean(Slope), mean_Percent = mean(`Percent Change`)) %>% 
+  arrange(mean_Slope)
+
+mean.mm.age <- all.slopes %>% 
+  filter(`p-value` == "≤ 0.05") %>% 
+  group_by(Age) %>% 
+  summarise(mean_Slope = mean(Slope), mean_Percent = mean(`Percent Change`)) %>% 
+  arrange(mean_Slope)  
+  
+#number of species age classes statistically increasing
+all.slopes %>% 
+  filter(`p-value` == "≤ 0.05") %>% 
+  filter(Slope > 0) %>% 
+  nrow()
+#15
+
+all.slopes %>% 
+  #filter(`p-value` == "≤ 0.05") %>% 
+  filter(Slope < 0, 
+         `Thermal Guild` == "Warm") %>% 
+  nrow()
+#28
+
+#number of species age classes statistically decreasing
+all.slopes %>% 
+  filter(`p-value` == "≤ 0.05") %>% 
+  filter(Slope < 0) %>% 
+  nrow()
+#52
+```
+
+##Plot
+```{r}
+all.slopes.CI <- all.slopes %>%
+  group_by(Species) %>%
+  summarize(
+    mean = mean(Slope),
+    sd = sd(Slope),
+    n = n(),
+    se = sd / sqrt(n),
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  )
+
+(
+  slopes.all.plot <- ggplot() +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    
+    #geom_boxplot(fill = "white", color = "black")+
+    geom_errorbar(
+      data = all.slopes.CI,
+      aes(x = Species, ymin = ci_lower, ymax = ci_upper),
+      width = 0.2
+    ) +
+    geom_point(data = all.slopes.CI, aes(x = Species, y = mean), size = 3) +
+    geom_jitter(
+      data = all.slopes,
+      aes(
+        x = Species,
+        y = Slope,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `p-value`,
+        group = Species
+      ),
+      size = 2,
+      width = 0.2
+    ) +
+    # scale_x_discrete(limits = c("Cisco", "Rainbow Trout", "Brown Trout", "Black Crappie",
+    #                             "Rock Bass", "Walleye", "Yellow Perch", "Northern Pike", "White Sucker",
+    #                             "Largemouth Bass", "Smallmouth Bass", "Pumpkinseed Sunfish",
+    #                             "Bluegill"))+
+    scale_color_viridis_d() +
+    scale_fill_viridis_d() +
+    scale_shape_manual(values = c(2, 21)) +
+    labs(y = "Change in Length-at-Age (mm/yr)", x = NULL) +
+    # annotate(
+    #   geom = "text",
+    #   x = 1,
+    #   y = 2.75,
+    #   label = 0.62
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 2,
+    #   y = 2.75,
+    #   label = 2.19
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 4,
+    #   y = 2.75,
+    #   label = -0.31
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 5,
+    #   y = 2.75,
+    #   label = -1.84
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 6,
+    #   y = 2.75,
+    #   label = -0.66
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 7,
+    #   y = 2.75,
+    #   label = -0.31
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 8,
+    #   y = 2.75,
+    #   label = -0.93
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 9,
+    #   y = 2.75,
+    #   label = -0.40
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 10,
+    #   y = 2.75,
+    #   label = -0.50
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 11,
+    #   y = 2.75,
+    #   label = 0.02
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 12,
+    #   y = 2.75,
+    #   label = -0.59
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 13,
+    #   y = 2.75,
+    #   label = -0.12
+    # ) +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = 12
+      ),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all_slopes_thermal.tiff", 
+       slopes.all.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+```{r}
+
+all.slopes.pc.CI <- all.slopes %>%
+  group_by(Species) %>%
+  summarize(
+    mean = mean(`Percent Change`),
+    sd = sd(`Percent Change`),
+    n = n(),
+    se = sd / sqrt(n),
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  )
+
+(
+  slopes.all.plot.percent <- ggplot() +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    #geom_boxplot(fill = "white", color = "black") +
+    geom_errorbar(data = all.slopes.pc.CI,
+                  aes(x = Species, ymin = ci_lower, ymax = ci_upper),
+                  width = 0.2) +
+    geom_point(data = all.slopes.pc.CI, aes(x = Species, y = mean), size = 3) +
+    geom_point(
+      data = all.slopes ,
+      aes(
+        x = Species,
+        y = `Percent Change`,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `p-value`,
+        group = Species
+      ),
+      size = 2
+    ) +
+    # scale_x_discrete(limits = c("Cisco", "Rainbow Trout", "Brown Trout", "Black Crappie",
+    #                             "Rock Bass", "Walleye", "Yellow Perch", "Northern Pike", "White Sucker",
+    #                             "Largemouth Bass", "Smallmouth Bass", "Pumpkinseed Sunfish", "Bluegill"))+
+    scale_color_viridis_d() +
+    scale_fill_viridis_d() +
+    scale_shape_manual(values = c(2, 16)) +
+    geom_text_repel(data = all.slopes,
+      aes(x = Species, y = `Percent Change`, label = Age),
+      show.legend = F,
+      max.overlaps = 100,
+      max.iter = 100000
+    ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 1,
+    #   y = 0.9,
+    #   label = 0.18,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 2,
+    #   y = 0.9,
+    #   label = 0.51,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 4,
+    #   y = 0.9,
+    #   label = -0.23,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 5,
+    #   y = 0.9,
+    #   label = -0.30,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 6,
+    #   y = 0.9,
+    #   label = -0.15,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 7,
+    #   y = 0.9,
+    #   label = -0.16,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 8,
+    #   y = 0.9,
+    #   label = -0.24,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 9,
+    #   y = 0.9,
+    #   label = -0.45,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 10,
+    #   y = 0.9,
+    #   label = -0.32,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 11,
+    #   y = 0.9,
+    #   label = -0.07,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 12,
+    #   y = 0.9,
+    #   label = -0.24,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 13,
+    #   y = 0.9,
+    #   label = -0.21,
+    #   size = 3
+    # ) +
+    labs(y = "Annual Percent Change in Length-at-Age", x = NULL) +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      ,
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = 12
+      ),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all_slopes_percent_thermal.tiff", 
+       slopes.all.plot.percent, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+Shape by life stage
+```{r}
+
+all.slopes.life.stage.CI <- all.slopes %>%
+  group_by(Species, `Life Stage`) %>%
+  summarize(
+    mean = mean(`Percent Change`),
+    sd = sd(`Percent Change`),
+    n = n(),
+    se = sd / sqrt(n),
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  ) %>% 
+  mutate(`Life Stage` = fct_rev(`Life Stage`))
+
+(
+  slopes.all.plot.percent.life.stage <- ggplot() +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    # geom_boxplot(
+    #   fill = "white",
+    #   color = "black",
+    #   outliers = F
+    # ) +
+    geom_errorbar(
+      data = all.slopes.life.stage.CI,
+      aes(
+        x = Species,
+        ymin = ci_lower,
+        ymax = ci_upper,
+        group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      width = 0.2
+    ) +
+    geom_point(data = all.slopes.life.stage.CI,
+               aes(
+                 x = Species,
+                 y = mean,
+                 group = interaction(`Life Stage`, Species)
+               ),
+               position = position_dodge(width = 0.4),
+               size = 3) +
+    geom_jitter(
+      data = all.slopes %>%
+        mutate(`Life Stage` = fct_rev(`Life Stage`)),
+      aes(
+        x = Species,
+        y = `Percent Change`,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `p-value`,
+        group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      size = 2
+    ) +
+    # scale_x_discrete(limits = c("Cisco", "Rainbow Trout", "Brown Trout", "Black Crappie",
+    #                             "Rock Bass", "Walleye", "Yellow Perch", "Northern Pike", "White Sucker",
+    #                             "Largemouth Bass", "Smallmouth Bass", "Pumpkinseed Sunfish", "Bluegill"))+
+    scale_color_viridis_d() +
+    scale_fill_viridis_d() +
+    scale_shape_manual(values = c(2, 16)) +
+    labs(y = "Annual Percent Change in Length-at-Age", x = NULL) +
+    # annotate(
+    #   geom = "text",
+    #   x = 0.75,
+    #   y = 0.3,
+    #   label = 0.18,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 2,
+    #   y = 0.6,
+    #   label = 0.51,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 3.75,
+    #   y = 0.1,
+    #   label = -0.31,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 4.25,
+    #   y = 0.2,
+    #   label = -0.11,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 4.75,
+    #   y = 0.1,
+    #   label = -0.26,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 5.25,
+    #   y = 0.01,
+    #   label = -0.33,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 5.75,
+    #   y = 0.15,
+    #   label = -0.36,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 6.25,
+    #   y = 0.25,
+    #   label = -0.10,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 6.75,
+    #   y = 0.1,
+    #   label = -0.21,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 7.25,
+    #   y = 0.2,
+    #   label = -0.08,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 7.75,
+    #   y = -0.03,
+    #   label = -0.24,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 8.75,
+    #   y = 0.1,
+    #   label = -0.45,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 9.75,
+    #   y = 0.15,
+    #   label = -0.32,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 10.75,
+    #   y = 0.01,
+    #   label = -0.54,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 11.25,
+    #   y = 0.25,
+    #   label = 0.12,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 11.75,
+    #   y = -0.03,
+    #   label = -0.30,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 12.25,
+    #   y = 0.05,
+    #   label = -0.17,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 12.75,
+    #   y = 0.15,
+    #   label = -0.45,
+    #   size = 2
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 13.25,
+    #   y = 0.25,
+    #   label = 0.09,
+    #   size = 2
+    # ) +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      ,
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = 12
+      ),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all_slopes_percent_thermal_life_stage.tiff", 
+       slopes.all.plot.percent.life.stage, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+Break adults and juveniles into their own panels
+Juveniles
+```{r}
+(
+  slopes.all.plot.percent.juvenile <- ggplot(data = all.slopes.life.stage.CI %>% 
+                                                 filter(`Life Stage` == "Juvenile")) +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    geom_errorbar(
+      aes(
+        x = Species,
+        ymin = ci_lower,
+        ymax = ci_upper,
+        group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      width = 0.2
+    ) +
+    geom_point(
+               aes(
+                 x = Species,
+                 y = mean,
+                 group = interaction(`Life Stage`, Species)
+               ),
+               position = position_dodge(width = 0.4),
+               size = 3) +
+    geom_jitter(
+      data = all.slopes %>%
+        filter(`Life Stage` == "Juvenile"),
+      aes(
+        x = Species,
+        y = `Percent Change`,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `p-value`,
+        #group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      size = 2
+    ) +
+    scale_color_viridis_d() +
+    scale_fill_viridis_d() +
+    scale_shape_manual(values = c(2, 16)) +
+    labs(y = "Annual Percent Change in Length-at-Age", 
+         x = NULL,
+         title = "Juveniles") +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      ,
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = 12
+      ),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+```
+
+Juveniles
+```{r}
+(
+  slopes.all.plot.percent.adult <- ggplot(data = all.slopes.life.stage.CI %>% 
+                                                 filter(`Life Stage` == "Adult")) +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    geom_errorbar(
+      aes(
+        x = Species,
+        ymin = ci_lower,
+        ymax = ci_upper,
+        group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      width = 0.2
+    ) +
+    geom_point(
+               aes(
+                 x = Species,
+                 y = mean,
+                 group = interaction(`Life Stage`, Species)
+               ),
+               position = position_dodge(width = 0.4),
+               size = 3) +
+    geom_jitter(
+      data = all.slopes %>%
+        filter(`Life Stage` == "Adult"),
+      aes(
+        x = Species,
+        y = `Percent Change`,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `p-value`,
+        #group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      size = 2
+    ) +
+    scale_color_viridis_d() +
+    scale_fill_viridis_d() +
+    scale_shape_manual(values = c(2, 16)) +
+    labs(y = "Annual Percent Change in Length-at-Age", 
+         x = NULL,
+         title = "Adults") +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      ,
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = 12
+      ),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+```
+
+Plot by age class instead of species
+```{r}
+all.slopes.age.CI <- all.slopes %>%
+  group_by(Age) %>%
+  summarize(
+    mean = mean(`Percent Change`),
+    sd = sd(`Percent Change`),
+    n = n(),
+    se = sd / sqrt(n),
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  ) 
+
+(
+  slopes.all.plot.percent.age.class <- ggplot() +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    # geom_boxplot(
+    #   fill = "white",
+    #   color = "black",
+    #   outliers = F
+    # ) +
+    geom_errorbar(
+      data = all.slopes.age.CI,
+      aes(
+        x = Age,
+        ymin = ci_lower,
+        ymax = ci_upper
+      ),
+      position = position_dodge(width = 0.4),
+      width = 0.2
+    ) +
+    geom_point(data = all.slopes.age.CI,
+               aes(
+                 x = Age,
+                 y = mean,
+               ),
+               position = position_dodge(width = 0.4),
+               size = 3) +
+    geom_jitter(data = all.slopes ,
+    aes(
+      x = Age,
+      y = `Percent Change`,
+      color = `Thermal Guild`,
+      fill = `Thermal Guild`,
+      shape = `p-value`
+    ), 
+    width = 0.2, 
+    size = 2) +
+    #geom_text(aes(label = spp_code))+
+    # scale_x_discrete(limits = c("Cisco", "Rainbow Trout", "Brown Trout", "Black Crappie",
+    #                             "Rock Bass", "Walleye", "Yellow Perch", "Northern Pike", "White Sucker",
+    #                             "Largemouth Bass", "Smallmouth Bass", "Pumpkinseed Sunfish", "Bluegill"))+
+    scale_color_viridis_d() +
+    scale_fill_viridis_d() +
+    scale_shape_manual(values = c(2, 16)) +
+    labs(y = "Annual Percent Change in Length-at-Age") +
+    # annotate(
+    #   geom = "text",
+    #   x = 1,
+    #   y = 0.05,
+    #   label = -0.66,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 2,
+    #   y = 0.25,
+    #   label = -0.57,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 3,
+    #   y = 0.5,
+    #   label = -0.18,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 4,
+    #   y = 0.5,
+    #   label = -0.08,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 5,
+    #   y = 0.5,
+    #   label = 0.04,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 6,
+    #   y = 0.5,
+    #   label = 0.01,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 7,
+    #   y = 0.5,
+    #   label = -0.03,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 8,
+    #   y = 0.5,
+    #   label = -0.09,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 9,
+    #   y = 0.5,
+    #   label = -0.12,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 10,
+    #   y = 0.5,
+    #   label = -0.23,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 11,
+    #   y = 0.5,
+    #   label = -0.21,
+    #   size = 3
+    # ) +
+    # annotate(
+    #   geom = "text",
+    #   x = 13,
+    #   y = 0.5,
+    #   label = -0.18,
+    #   size = 3
+    # ) +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      #axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all_slopes_percent_age_class.tiff", 
+       slopes.all.plot.percent.age.class, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+```{r}
+(slopes.all.plot.percent.age.class.spp.facet <- ggplot(data = all.slopes , 
+                           aes(x = Age, y = `Percent Change`, 
+                               color = `Thermal Guild`, 
+                               fill = `Thermal Guild`,
+                               shape = `p-value`,
+                               group = Age
+                               ))+
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed")+
+  geom_point(size = 2)+
+  facet_wrap(~Species)+
+  scale_color_viridis_d()+
+  scale_fill_viridis_d()+
+  scale_shape_manual(values = c(2, 16))+ 
+  labs(y = "Annual Percent Change in Length-at-Age")+
+  theme_bw()+
+  theme(#panel.background = element_rect(fill = "gray"),
+        #axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 8), axis.title.x = element_text(size = 10),
+        axis.text.x = element_text(size = 8),
+        strip.text = element_text(size = 8))
+)
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all_slopes_percent_age_class_spp_facet.tiff", 
+       slopes.all.plot.percent.age.class.spp.facet, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+Multi-panel figure to include in text that shows trends by species and by age class
+```{r}
+age.class.species.multi.panel.plot <- ggarrange(slopes.all.plot.percent.age.class, 
+                                                slopes.all.plot.percent.age.class.spp.facet,
+                                                slopes.all.plot.percent,
+                                                slopes.all.plot.percent.life.stage,
+                                                ncol = 2, nrow = 2, 
+                                                common.legend = T, legend = "right",
+                                                labels = "AUTO", label.x = 0.04)
+
+age.class.species.multi.panel.plot
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/age_class_species_multi-panel_plot.tiff", 
+       age.class.species.multi.panel.plot, 
+       dpi = 300, width = 267, height = 200, units = "mm")
+
+```
+
+Two-panel version
+```{r}
+age.class.species.two.panel.plot <- ggarrange(
+  slopes.all.plot.percent.age.class,
+  slopes.all.plot.percent.life.stage,
+  ncol = 1,
+  nrow = 2,
+  common.legend = T,
+  legend = "right",
+  labels = "AUTO",
+  label.x = 0.03
+)
+
+age.class.species.two.panel.plot
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/age_class_species_two-panel_plot.tiff", 
+       age.class.species.two.panel.plot, 
+       dpi = 300, width = 200, height = 250, units = "mm")
+```
+
+# Model of slopes with FTP
+## all slopes
+
+Visualize the relationships
+```{r}
+#Check assumptions
+#linear relationships
+(slopes.linear.plot <- ggscatter(data = all.slopes, x = "FTP", y = "Percent Change", color = "Life Stage", add = "reg.line")+
+  stat_regline_equation(aes(label =  paste(..eq.label.., ..rr.label.., sep = "~~~~"), color = `Life Stage`))+
+  scale_color_viridis_d(end = 0.8)
+)
+
+# ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all_slopes_linear_relationships.tiff", 
+#        slopes.linear.plot, 
+#        dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+Check assumptions
+```{r}
+#homogeneity of regression slopes
+anova_test(`Percent Change` ~ FTP*`Life Stage`, data = all.slopes) # not ideal
+
+slopes.model <- lm(`Percent Change` ~ FTP*`Life Stage`, data = all.slopes)
+summary(slopes.model)
+
+slopes.model.metric <- augment(slopes.model) 
+
+#normality of residuals
+slopes.shapiro <- shapiro_test(slopes.model.metric$.resid)
+slopes.shapiro # p < 0.05 
+hist(scale(all.slopes$`Percent Change`))
+
+#homogeneity of variances
+slopes.levene <- slopes.model.metric %>% levene_test(.resid ~ `Life Stage`)
+slopes.levene # p = 0.43 => meets assumptions
+
+#outliers
+slopes.model.metric %>% 
+  filter(abs(.std.resid) > 3) %>%
+  as.data.frame() #no outliers
+
+res.aov <- all.slopes %>% anova_test(`Percent Change` ~ FTP + `Life Stage`)
+get_anova_table(res.aov)
+
+pwc <- all.slopes %>% 
+  rename(life_stage  = `Life Stage`,
+         percent_change = `Percent Change`) %>% 
+  emmeans_test(
+    percent_change ~ life_stage, covariate = FTP,
+    p.adjust.method = "bonferonni"
+    )
+pwc
+
+get_emmeans(pwc)
+```
+
+Visualize pairwise comparisons 
+```{r}
+# Visualization: line plots with p-values
+pwc <- pwc %>% add_xy_position(x = "life_stage", fun = "mean_se")
+
+(slopes.ancova.emmeans.plot <- ggline(get_emmeans(pwc), x = "life_stage", y = "emmean") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) + 
+  stat_pvalue_manual(pwc, hide.ns = TRUE, tip.length = FALSE) +
+  labs(
+    subtitle = get_test_label(res.aov, detailed = TRUE),
+    caption = get_pwc_label(pwc),
+    x = "Life Stage", y = "Estimated Marginal Means")
+)
+
+# ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all_slopes_percent_age_class_spp_facet.tiff", 
+#        slopes.ancova.emmeans.plot, 
+#        dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+Stack plots
+```{r}
+all.slopes.ancova.stack <- ggarrange(slopes.linear.plot, slopes.ancova.emmeans.plot,
+                                     ncol = 1, nrow  = 2,
+                                     labels = "AUTO")
+
+all.slopes.ancova.stack
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all_slopes_ancova_stack.tiff", 
+       all.slopes.ancova.stack, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+## sig diff from 0 slopes
+Visualize the relationship
+```{r}
+all.slopes.sig.dif <- all.slopes %>% filter(p.value < 0.05)
+
+#calculate quantiles
+all.slopes.sig.dif.quants <- quantile(all.slopes.sig.dif$`Percent Change`, c(0.025, 0.975))
+
+#identify points outside 2.5% and 97.5% quantiles
+all.slopes.sig.dif <- all.slopes.sig.dif %>% 
+  mutate(Outlier = case_when(
+    Slope < -0.8107416 ~ "Below 2.5%",
+    Slope > -0.8107416 & Slope < 0.3922495  ~ "Not outliers",
+    Slope > 0.3922495  ~ "Above 97.5%"
+  ))
+#linear relationships
+(slopes.sig.dif.linear.plot <- ggscatter(data = all.slopes.sig.dif, 
+                                        x = "FTP", y = "Percent Change", 
+                                        color = "Life Stage", add = "reg.line"
+                                        #, shape = "Outlier"
+                                        )+
+  stat_regline_equation(aes(label =  paste(..eq.label.., ..rr.label.., sep = "~~~~"), color = `Life Stage`))+
+  scale_color_viridis_d(end = 0.8)+
+  scale_shape_manual(values = c(1, 2, 19))
+)
+```
+
+Check assumptions
+```{r}
+#homogeneity of regression slopes
+anova_test(`Percent Change` ~ FTP*`Life Stage`, data = all.slopes.sig.dif) # not ideal
+
+slopes.model.sig.dif <- lm(`Percent Change` ~ FTP*`Life Stage`, data = all.slopes.sig.dif)
+summary(slopes.model.sig.dif)
+
+slopes.model.metric.sig.dif <- augment(slopes.model.sig.dif) 
+
+#normality of residuals
+slopes.shapiro.sig.dif <- shapiro_test(slopes.model.metric.sig.dif$.resid)
+slopes.shapiro.sig.dif # p = 0.001 => violates assumptions
+
+#homogeneity of variances
+slopes.levene.sig.dif <- slopes.model.metric.sig.dif %>% levene_test(.resid ~ `Life Stage`)
+slopes.levene.sig.dif # p = 0.17 => meets assumptions
+
+#outliers
+slopes.model.metric.sig.dif %>% 
+  filter(abs(.std.resid) > 3) %>%
+  as.data.frame() #two outliers
+
+res.aov.sig.dif <- all.slopes.sig.dif %>% anova_test(`Percent Change` ~ FTP + `Life Stage`)
+get_anova_table(res.aov.sig.dif)
+
+pwc.sig.dif <- all.slopes.sig.dif %>% 
+  rename(life_stage  = `Life Stage`,
+         percent_change = `Percent Change`) %>% 
+  emmeans_test(
+    percent_change ~ life_stage, covariate = FTP,
+    p.adjust.method = "bonferroni"
+    )
+pwc.sig.dif
+
+get_emmeans(pwc.sig.dif)
+```
+
+Visuallize pairwise comparisons
+```{r}
+# Visualization: line plots with p-values
+pwc.sig.dif <- pwc.sig.dif %>% add_xy_position(x = "life_stage", fun = "mean_se")
+(slopes.sig.dif.ancova.emmeans.plot <- ggline(get_emmeans(pwc.sig.dif), x = "life_stage", y = "emmean") +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) + 
+  stat_pvalue_manual(pwc.sig.dif, hide.ns = TRUE, tip.length = FALSE) +
+  labs(
+    subtitle = get_test_label(res.aov.sig.dif, detailed = TRUE),
+    caption = get_pwc_label(pwc.sig.dif),
+    x = "Life Stage", y = "Estimated Marginal Means")
+)
+```
+
+stack plots
+```{r}
+slopes.sig.dif.ancova.stack <- ggarrange(slopes.sig.dif.linear.plot, slopes.sig.dif.ancova.emmeans.plot,
+                                     ncol = 1, nrow  = 2,
+                                     labels = "AUTO", legend = "right")
+
+slopes.sig.dif.ancova.stack
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/sig_dif_slopes_ancova_stack.tiff", 
+       slopes.sig.dif.ancova.stack, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+## Multi-panel plot for lm and ancova
+```{r}
+
+fig3 <- ggarrange(
+  slopes.all.plot.percent.age.class,
+  slopes.linear.plot, 
+  slopes.all.plot.percent.juvenile,
+  slopes.all.plot.percent.adult,
+  ncol = 2,
+  nrow = 2,
+  #common.legend = T,
+  legend = "right",
+  labels = "AUTO",
+  label.x = 0.03
+)
+
+fig3
+
+ggsave(
+  filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/fig3.tiff",
+  fig3,
+  dpi = 300,
+  width = 250,
+  height = 200,
+  units = "mm"
+)
+
+
+```
+
+# All species 
+## Model
+
+Filter for target species from age groups that had enough data for a BRT, remove NA rows
+```{r}
+grow.merge.target.spp <- all.grow.merge %>% 
+  filter(species %in% c("black_crappie", "bluegill", "brown_trout", "cisco", "common_white_sucker", 
+                        "largemouth_bass", "northern_pike", "pumpkinseed_sunfish", "rainbow_trout", 
+                        "rock_bass", "smallmouth_bass", "walleye", "yellow_perch")) %>% 
+  filter(species == "black_crappie" & !age_group %in% c(12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22) |
+        species == "bluegill" & !age_group %in% c(12, 13, 18) |
+        species == "brown_trout" & age_group %in% c(1, 2, 3, 4, 5) |
+        species == "cisco" & age_group %in% c(2, 3, 4, 5, 6, 7) |
+        species == "common_white_sucker" & age_group %in% c(1, 2, 3, 4, 5) |
+        species == "largemouth_bass" & !age_group %in% c(13, 14, 15, 16, 17, 18, 19, 20, 21, 22) |
+        species == "northern_pike" & !age_group %in% c(11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22) |
+        species == "pumpkinseed_sunfish" & age_group %in% c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) |
+        species == "rainbow_trout" & age_group %in% c(1, 2, 3, 4) |
+        species == "rock_bass" & age_group %in% c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) |
+        species == "smallmouth_bass" &  age_group %in% c(0:10) |
+        species == "walleye" & age_group %in% c(0:12) |
+        species == "yellow_perch" & age_group %in% c(0:11)
+  ) %>% 
+  filter(!is.na(length_mean_mm)) %>% 
+  left_join(all.slopes %>% 
+              select(species, Age, FTP, `Thermal Guild`, mean_length, CTmax, `Life Stage`) %>% 
+              rename(age_group = Age, life_stage = `Life Stage`),
+            by = c("species", "age_group")) %>% 
+  mutate(species_age_group = )
+```
+
+##
+
+```{r}
+#linear model
+all.spp.lm <- lm(length_mean_mm ~ begin_date_year*age_group*species + log_max_depth + logarea + doy, 
+                 data = grow.merge.target.spp)
+summary(all.spp.lm)
+
+options(na.action = "na.omit")
+dd <- dredge(all.spp.lm)
+
+#calculate and interpret effect sizes
+eta_squared(all.spp.lm)
+#interpret(eta_squared(all.spp.lm), rules = "cohen1992")
+
+#calculate AIC score
+AIC(all.spp.lm)
+
+#examine model fit
+testDispersion(all.spp.lm)
+
+simulation.output <- simulateResiduals(fittedModel = all.spp.lm)
+
+residuals(all.spp.lm)
+residuals(all.spp.lm, quantileFunction = qnorm)
+
+plot(all.spp.lm)
+```
+
+## Post-hoc comparisons
+```{r}
+all.spp.emm <- emmeans(all.spp.lm, ~ begin_date_year*age_group*species)
+pairs(all.spp.emm, by = c("species", "age_group", "begin_date_year"))
+test(pairs(all.spp.emm, by = c("species", "age_group", "begin_date_year")), by = NULL, adjust = "mvt")
+
+#export tables
+#interpret(eta_squared(all.spp.lm), rules = "cohen1992") %>%
+  write.csv(file = "Outputs/Tables/all_spp_eta_squared.csv")
+
+#slope contrasts
+# Obtain slope estimates
+all.spp.slopes <- emtrends(all.spp.lm, ~age_group*species, var = "begin_date_year")
+# Compare estimated slopes to 0
+all.spp.slope.contrasts <- test(all.spp.slopes) %>% 
+  rename(Age = age_group) %>% 
+  filter(!is.na(`p.value`))
+
+all.spp.slope.contrasts %>%
+  write.csv(file = "Outputs/Tables/all_spp_emmeans.csv")
+```
+
+### Plot raw data
+```{r}
+(all.spp.length.year.plot <- ggplot(data = grow.merge.target.spp %>% 
+                              mutate(Age = as.factor(age_group)), 
+                            aes(x = begin_date_year, y = length_mean_mm, 
+                                color = Age, fill = Age, group = Age))+
+    facet_wrap(~species, scales = "free")+
+    #geom_point()+
+    geom_smooth(method = "lm")+
+    stat_poly_eq(use_label("eq"))+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(y = "Length (mm)", x = "Year")+
+    theme_bw()
+)
+
+```
+### Marginal Effects
+```{r}
+result <- predict_response(all.spp.lm, c("begin_date_year", "age_group", "species"))
+
+# plot(result)
+# test_predictions(result) %>% 
+#   write.csv(file = "Outputs/Tables/all.spp_pairwise_length_time_slopes.csv", row.names = F)
+
+(all.spp.marginal.plot <- ggpredict(all.spp.lm, terms = c("begin_date_year", "age_group", "species")) %>%  
+    plot()+
+    #stat_poly_eq(use_label("eq"))+
+    stat_regline_equation()+
+    stat_poly_line()+
+    # annotate(geom = "text", label = "y = 77 + 0.07x", x = 2000, y = 224)+
+    # annotate(geom = "text", label = "y = 21 + 0.093x", x = 2000, y = 212)+
+    # annotate(geom = "text", label = "y = -64 + 0.13x", x = 2000, y = 199)+
+    # annotate(geom = "text", label = "y = 230 - 0.028x", x = 2000, y = 182)+
+    # annotate(geom = "text", label = "y = 610 - 0.23x", x = 2000, y = 160)+
+    # annotate(geom = "text", label = "y = 920 - 0.39x", x = 2000, y = 137)+
+    # annotate(geom = "text", label = "y = 1200 - 0.55x", x = 2000, y = 110)+
+    # annotate(geom = "text", label = "y = 1700 - 0.83x", x = 2000, y = 80)+
+    scale_color_viridis_d()+
+    scale_fill_viridis_d()+
+    labs(title = NULL,
+         y = "Mean Length-at-Age (mm)",
+         x = "Year")+
+    guides(fill = guide_legend(title = "Age", reverse = T), color = guide_legend(title = "Age", reverse = T))+
+    theme_bw()
+)
+
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/all.spp_marginal_effects_plot.tiff", 
+       all.spp.marginal.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+
+# Bayesian model
+
+Building a single model that includes all species using species as a fixed effect
+
+Trouble Shooting 
+```{r}
+library(cmdstanr)
+install_cmdstan()
+cmdstan_path()
+
+```
+
+## Model setup 
+```{r}
+# New column that combines age_group and species
+grow.merge.target.spp <- grow.merge.target.spp %>% 
+  mutate(species_age_group = interaction(species, age_group))
+
+nrow(filter(grow.merge.target.spp, Data_Type == "Contemporary"))
+nrow(filter(grow.merge.target.spp, Data_Type == "Historic"))
+
+#Main effects and two-way interactions
+# formula1 <- bf(
+#   length_mean_mm ~ (begin_date_year + age_group + log_max_depth + logarea + doy + species)^2
+# )
+
+#Model structure from frequentist regressions
+formula2 <- bf(length_mean_mm ~ log_max_depth + logarea + doy + (1 + begin_date_year | species_age_group))
+
+#Adding lake as a random effect
+# formula3 <- bf(length_mean_mm ~ begin_date_year*age_group*species + log_max_depth + logarea + doy + (1|lakename))
+
+
+
+```
+
+## Run models
+Fit the models
+```{r}
+# fit1 <- brm(
+#   formula = formula1,
+#   data = grow.merge.target.spp,
+#   family = gaussian(),      
+#   chains = 4,
+#   iter = 2000,
+#   cores = 4,
+#   control = list(adapt_delta = 0.95)
+# )
+
+fit2 <- brm(
+  formula = formula2,
+  data = grow.merge.target.spp,
+  family = gaussian(),      
+  chains = 4,
+  iter = 100000,
+  thin = 10,
+  cores = 4,
+  control = list(adapt_delta = 0.9)
+)
+
+# fit3 <- brm(
+#   formula = formula3,
+#   data = grow.merge.target.spp,
+#   family = gaussian(),      
+#   chains = 4,
+#   iter = 2000,
+#   cores = 4,
+#   control = list(adapt_delta = 0.95)
+# )
+```
+## Examine results
+```{r}
+summary(fit2)
+plot(fit2)
+
+rhat(fit2)
+
+write.xlsx(
+  list(
+    "Fixed Effects" = fixef(fit2),
+    "Random Effects" = as.data.frame(ranef(fit2)),
+    "Convergence" = as.data.frame(rhat(fit2))
+  ),
+  file = "~/GitHub/EAGER_growth/Outputs/Tables/bayesian_model_output.xlsx",
+  rowNames = T
+)
+```
+
+## Extract random slopes
+```{r}
+#Use this chunk if you've run the model and have it saved in your environment
+group_effects <- ranef(fit2)$species_age_group
+head(group_effects) # Shows array: [group, effect, statistic (Estimate, lower, upper)]
+
+
+# Get posterior means for each group's slope
+slopes <- as.data.frame(group_effects) %>% 
+  #move species_age_group from the row names to a column
+  rownames_to_column(var = "species_age_group") %>% 
+  #rename columns to facilitate plotting
+  rename(slope_bayes = "Estimate.begin_date_year",
+         lower_bayes = "Q2.5.begin_date_year",
+         upper_bayes = "Q97.5.begin_date_year") %>% 
+  #split species_age_group into species and age_group for plotting
+  separate(species_age_group, into = c("species", "age_group"), sep = "\\.") %>% 
+  #fix age_group order to be numeric
+  mutate(age_group = factor(age_group, levels = sort(as.numeric(unique(age_group))))) %>% 
+  #change species names to remove _
+  mutate(species = species %>% 
+           str_replace_all("_", " ") %>% 
+           str_to_title()) %>% 
+  #rename age_group to make plot cleaner
+  rename(Age = age_group, Species = species) %>% 
+  #join with frequentist output
+  left_join(all.slopes %>% 
+            mutate(Species = if_else(Species == "White Sucker", "Common White Sucker", Species)), 
+            by = c("Species", "Age")) %>% 
+  #reorder Species by FTP for plotting
+  mutate(Species = fct_reorder(Species, FTP)) %>% 
+  #create percent change column for Bayes slopes
+  mutate(`Bayes Percent Change` = slope_bayes/mean_length*100,
+         bayes_pc_lower = lower_bayes/mean_length*100,
+         bayes_pc_upper = upper_bayes/mean_length*100,
+  #create column for if credibilty interval overlaps with 0
+         `Statistically Different` = if_else(lower_bayes > 0 | upper_bayes < 0, "Different from 0", "Overlaps 0")
+  )
+```
+
+```{r}
+#Use this chunk if you don't have the model saved in your environment and are reading back in the output that was previously written out to excel
+group_effects <- read.xlsx("~/GitHub/EAGER_growth/Outputs/Tables/bayesian_model_output.xlsx", 2)
+head(group_effects) 
+
+
+# Get posterior means for each group's slope
+slopes <- as.data.frame(group_effects) %>% 
+  rename_with(~str_remove(.x, "species_age_group.")) %>% 
+  #rename columns to facilitate plotting
+  rename(species_age_group = X1,
+         slope_bayes = Estimate.begin_date_year,
+         lower_bayes = Q2.5.begin_date_year,
+         upper_bayes = Q97.5.begin_date_year) %>% 
+  #split species_age_group into species and age_group for plotting
+  separate(species_age_group, into = c("species", "age_group"), sep = "\\.") %>% 
+  #fix age_group order to be numeric
+  mutate(age_group = factor(age_group, levels = sort(as.numeric(unique(age_group))))) %>% 
+  #change species names to remove _
+  mutate(species = species %>% 
+           str_replace_all("_", " ") %>% 
+           str_to_title()) %>% 
+  #rename age_group to make plot cleaner
+  rename(Age = age_group, Species = species) %>% 
+  #join with frequentist output
+  left_join(all.slopes %>% 
+            mutate(Species = if_else(Species == "White Sucker", "Common White Sucker", Species)), 
+            by = c("Species", "Age")) %>% 
+  #reorder Species by FTP for plotting
+  mutate(Species = fct_reorder(Species, FTP)) %>% 
+  #create percent change column for Bayes slopes
+  mutate(`Bayes Percent Change` = slope_bayes/mean_length*100,
+         bayes_pc_lower = lower_bayes/mean_length*100,
+         bayes_pc_upper = upper_bayes/mean_length*100,
+  #create column for if credibilty interval overlaps with 0
+         `Statistically Different` = if_else(lower_bayes > 0 | upper_bayes < 0, "Different from 0", "Overlaps 0")
+  )
+
+```
+
+Export output after joining with frequentist output
+```{r}
+write.csv(slopes, "~/GitHub/EAGER_growth/Outputs/Tables/bayes_all_slopes.csv", row.names = F)
+```
+
+Summarize by species life stage
+```{r}
+slopes.species.life.stage <- slopes %>% 
+  group_by(Species, `Life Stage`) %>% 
+  summarize(mean_slope = mean(slope_bayes), sd_slope = sd(slope_bayes),
+            mean_pc = mean(`Bayes Percent Change`), sd_pc  = sd(`Bayes Percent Change`)) %>% 
+  pivot_wider(names_from = `Life Stage`, 
+              values_from = c(mean_slope, sd_slope, mean_pc, sd_pc)) %>% 
+  select(Species, contains("Juvenile"), contains("Adult"))
+
+slopes.age <- slopes %>% 
+  group_by(Age) %>% 
+  summarize(mean_slope = mean(slope_bayes), sd_slope = sd(slope_bayes),
+            mean_pc = mean(`Bayes Percent Change`), sd_pc  = sd(`Bayes Percent Change`)) 
+```
+
+
+## Custom plots
+### Percent change by age class facet by species
+```{r}
+
+thermal.guild.colors <- c("#4662D7FF", "#1AE4B6FF", "#CB2A04FF")
+
+(fit2.species.age.groups.plot <- ggplot(slopes, aes(x = Age, y = `Bayes Percent Change`, 
+                                                    color = `Thermal Guild`, fill = `Statistically Different`,
+                                                    shape = `Statistically Different`)) +
+  facet_wrap(~Species)+
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed")+
+  geom_point(position=position_dodge(width=0.5), size=0.5) +
+  geom_errorbar(aes(ymin=bayes_pc_lower, ymax=bayes_pc_upper),
+                width=0.2, position=position_dodge(width=0.5), alpha = 0.5) +
+  scale_color_manual(values = thermal.guild.colors)+
+  scale_shape_manual(values = c(19, 2))+
+  labs(
+    y = "Annual percent change relative to mean length (mm/yr)"
+  ) +
+  theme_bw()+
+  theme(strip.text = element_text(size = 8))
+)
+
+ggsave(
+  ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/bayes_all_slopes_percent_age_class_spp_facet.tiff", 
+       fit2.species.age.groups.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+)
+```
+
+Species on x-axis with age labels
+```{r}
+bayes.all.slopes.pc.CI <- slopes %>%
+  group_by(Species) %>%
+  summarize(
+    mean = mean(`Percent Change`),
+    sd = sd(`Percent Change`),
+    n = n(),
+    se = sd / sqrt(n),
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  )
+
+(
+  bayes.slopes.all.plot.percent <- ggplot() +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    geom_errorbar(data = bayes.all.slopes.pc.CI,
+                  aes(x = Species, ymin = ci_lower, ymax = ci_upper),
+                  width = 0.2) +
+    geom_point(data = all.slopes.pc.CI, aes(x = Species, y = mean), size = 3) +
+    geom_point(
+      data = slopes ,
+      aes(
+        x = Species,
+        y = `Percent Change`,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `Statistically Different`,
+        group = Species
+      ),
+      size = 2
+    ) +
+    scale_color_manual(values = thermal.guild.colors) +
+    scale_fill_manual(values = thermal.guild.colors) +
+    scale_shape_manual(values = c(2, 16)) +
+    geom_text_repel(data = slopes,
+      aes(x = Species, y = `Percent Change`, label = Age),
+      show.legend = F,
+      max.overlaps = 100,
+      max.iter = 100000
+    ) +
+    labs(y = "Annual Percent Change in Length-at-Age", x = NULL) +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      ,
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = 12
+      ),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/bayes_slopes_percent_thermal.tiff", 
+       bayes.slopes.all.plot.percent, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+
+### Plot by species no facet
+```{r}
+bayes.all.slopes.CI <- slopes %>%
+  group_by(Species) %>%
+  summarize(
+    mean = mean(slope_bayes),
+    sd = sd(slope_bayes),
+    n = n(),
+    se = sd / sqrt(n),
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  )
+
+(
+  bayes.slopes.all.plot <- ggplot() +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    geom_errorbar(
+      data = bayes.all.slopes.CI,
+      aes(x = Species, ymin = ci_lower, ymax = ci_upper),
+      width = 0.2
+    ) +
+    geom_point(data = bayes.all.slopes.CI, aes(x = Species, y = mean), size = 3) +
+    geom_jitter(
+      data = slopes,
+      aes(
+        x = Species,
+        y = Slope,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `Statistically Different`,
+        group = Species
+      ),
+      size = 2,
+      width = 0.2
+    ) +
+    scale_color_manual(values = thermal.guild.colors) +
+    scale_fill_manual(values = thermal.guild.colors) +
+    scale_shape_manual(values = c(19, 2)) +
+    labs(y = "Change in Length-at-Age (mm/yr)", x = NULL) +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/bayes_all_slopes_species.tiff", 
+       bayes.slopes.all.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+### Plot by age no facet
+```{r}
+bayes.all.slopes.age.CI <- slopes %>%
+  group_by(Age) %>%
+  summarize(
+    mean = mean(`Bayes Percent Change`),
+    sd = sd(`Bayes Percent Change`),
+    n = n(),
+    se = sd / sqrt(n),
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  )
+
+(
+  bayes.slopes.all.age.percent.change.plot <- ggplot() +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    geom_errorbar(
+      data = bayes.all.slopes.age.CI,
+      aes(x = Age, ymin = ci_lower, ymax = ci_upper),
+      width = 0.2
+    ) +
+    geom_point(data = bayes.all.slopes.age.CI, aes(x = Age, y = mean), size = 3) +
+    geom_jitter(
+      data = slopes,
+      aes(
+        x = Age,
+        y = `Bayes Percent Change`,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `Statistically Different`,
+        group = Species
+      ),
+      size = 2,
+      width = 0.2
+    ) +
+    scale_color_manual(values = thermal.guild.colors) +
+    scale_fill_manual(values = thermal.guild.colors) +
+    scale_shape_manual(values = c(19, 2)) +
+    labs(y = "Percent Change", x = NULL) +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      #axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+
+ggsave(filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/bayes_all_slopes_age_percent_change.tiff", 
+       bayes.slopes.all.age.percent.change.plot, 
+       dpi = 300, width = 200, height = 150, units = "mm")
+```
+
+### Break adults and juveniles into their own plots
+Juveniles
+```{r}
+bayes.all.slopes.life.stage.CI <- slopes %>%
+  #rename(`Life Stage` = life_stage) %>% 
+  group_by(Species, `Life Stage`) %>%
+  summarize(
+    mean = mean(`Bayes Percent Change`),
+    sd = sd(`Bayes Percent Change`),
+    n = n(),
+    se = sd / sqrt(n),
+    ci_lower = mean - qt(0.975, n - 1) * se,
+    ci_upper = mean + qt(0.975, n - 1) * se
+  )%>% 
+  mutate(`Life Stage` = fct_rev(`Life Stage`))
+
+
+(
+  bayes.slopes.all.plot.percent.juvenile <- ggplot(data = bayes.all.slopes.life.stage.CI %>% 
+                                                     filter(`Life Stage` == "Juvenile")) +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    geom_errorbar(
+      aes(
+        x = Species,
+        ymin = ci_lower,
+        ymax = ci_upper,
+        group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      width = 0.2
+    ) +
+    geom_point(
+               aes(
+                 x = Species,
+                 y = mean,
+                 group = interaction(`Life Stage`, Species)
+               ),
+               position = position_dodge(width = 0.4),
+               size = 3) +
+    geom_jitter(
+      data = slopes %>%
+        filter(`Life Stage` == "Juvenile"),
+      aes(
+        x = Species,
+        y = `Bayes Percent Change`,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `Statistically Different`,
+        #group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      size = 2
+    ) +
+    scale_color_manual(values = thermal.guild.colors) +
+    scale_fill_manual(values = thermal.guild.colors) +
+    scale_shape_manual(values = c(19, 2)) +
+    labs(y = "Percent Change", 
+         x = NULL,
+         title = "Juveniles") +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      ,
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = 12
+      ),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+```
+Adults
+```{r}
+(
+  bayes.slopes.all.plot.percent.adult <- ggplot(data = bayes.all.slopes.life.stage.CI %>% 
+                                                 filter(`Life Stage` == "Adult")) +
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+    geom_errorbar(
+      aes(
+        x = Species,
+        ymin = ci_lower,
+        ymax = ci_upper,
+        group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      width = 0.2
+    ) +
+    geom_point(
+               aes(
+                 x = Species,
+                 y = mean,
+                 group = interaction(`Life Stage`, Species)
+               ),
+               position = position_dodge(width = 0.4),
+               size = 3) +
+    geom_jitter(
+      data = slopes %>%
+        filter(`Life Stage` == "Adult"),
+      aes(
+        x = Species,
+        y = `Bayes Percent Change`,
+        color = `Thermal Guild`,
+        fill = `Thermal Guild`,
+        shape = `Statistically Different`,
+        #group = interaction(`Life Stage`, Species)
+      ),
+      position = position_dodge(width = 0.4),
+      size = 2
+    ) +
+    scale_color_manual(values = thermal.guild.colors) +
+    scale_fill_manual(values = thermal.guild.colors) +
+    scale_shape_manual(values = c(19, 2)) +
+    labs(y = "Percent Change", 
+         x = NULL,
+         title = "Adults") +
+    theme_bw()+
+    theme(
+      #panel.background = element_rect(fill = "gray"),
+      ,
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1,
+        size = 12
+      ),
+      axis.text.y = element_text(size = 10),
+      axis.title.x = element_text(size = 12)
+    )
+)
+
+```
+
+## Model slopes w/ FTP and Life Stage
+
+###Visualize Relationships
+```{r}
+(
+  bayes.slopes.linear.plot <- ggscatter(
+    data = slopes,
+    x = "FTP",
+    y = "Bayes Percent Change",
+    color = "Life Stage",
+    add = "reg.line",
+    alpha = 0.5
+  ) +
+    stat_regline_equation(aes(
+      label =  paste(..eq.label.., ..rr.label.., sep = "~~~~"),
+      color = `Life Stage`
+    ), size = 2.5, label.y.npc = "bottom") +
+    scale_color_viridis_d(end = 0.9, option = "C") +
+    labs(y = "Percent Change") +
+    theme(text = element_text(size = 12))
+)
+
+ggsave(
+  filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/bayes_ftp_life_stage_slopes_raw_data.tiff",
+  bayes.slopes.linear.plot,
+  width = 200,
+  height = 150,
+  units = "mm",
+  dpi = 300
+)
+
+(
+  bayes.slopes.linear.plot.remove.spp <- ggscatter(
+    data = slopes %>%
+      filter(!Species %in% c("Rainbow Trout", "Northern Pike")),
+    x = "FTP",
+    y = "Bayes Percent Change",
+    color = "Life Stage",
+    add = "reg.line",
+    alpha = 0.5
+  ) +
+    stat_regline_equation(aes(
+      label =  paste(..eq.label.., ..rr.label.., sep = "~~~~"),
+      color = `Life Stage`
+    ), size = 2.5, label.y.npc = "bottom") +
+    scale_color_viridis_d(end = 0.9, option = "C") +
+    labs(y = "Percent Change")+
+    theme(text = element_text(size = 12))
+)
+
+ggsave(
+  filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/bayes_ftp_life_stage_slopes_raw_data_spp_removed.tiff",
+  bayes.slopes.linear.plot.remove.spp,
+  width = 200,
+  height = 150,
+  units = "mm",
+  dpi = 300
+)
+
+
+(bayes.slopes.boxplot <- ggplot(slopes, aes(x = `Life Stage`, y = slope_bayes))+
+    geom_point(aes(color = Species))+
+    geom_boxplot(outliers = F)
+)
+
+(bayes.pc.boxplot <- ggplot(slopes, aes(x = `Life Stage`, y = `Bayes Percent Change`))+
+  geom_point(aes(color = Species))+
+  geom_boxplot(outliers = F)
+)
+
+
+```
+
+### Model
+Meta-analytic model
+```{r}
+slopes <- slopes %>% 
+  rename(se_slope = Est.Error.begin_date_year,
+         life_stage = `Life Stage`)
+
+second_model_bayes <- brm( formula = bf(
+  slope_bayes | se(se_slope) ~ FTP*life_stage),
+  data = slopes,
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  control = list(adapt_delta = 0.8)
+)
+
+summary(second_model_bayes)
+```
+
+Post-hoc comparisons
+```{r}
+# 'emtrends' estimates the slope of FTP within each life_stage level
+ftp_slopes <- emtrends(second_model_bayes, ~ life_stage, var = "FTP")
+summary(ftp_slopes)
+pairs(ftp_slopes)  # Compare FTP slope between life stages
+```
+
+Extract posterior summary
+```{r}
+#create range of FTP to predict over
+pred_grid <- expand.grid(
+  FTP = seq(min(slopes$FTP, na.rm = TRUE), max(slopes$FTP, na.rm = TRUE), length.out = 100),
+  life_stage = unique(slopes$life_stage),
+  se_slope = 0
+)
+
+#extract posterior summaries and intervals for each combination of FTP and Life Stage
+predictions <- add_fitted_draws(
+  model = second_model_bayes,
+  newdata = pred_grid,
+  re_formula = NA  # Ensures population-level prediction
+)
+
+#summarize
+pred_summary <- predictions %>%
+  group_by(FTP, life_stage) %>%
+  summarise(
+    median = median(.value),
+    lower = quantile(.value, 0.025),
+    upper = quantile(.value, 0.975)
+  ) %>%
+  ungroup()
+```
+
+Plot
+```{r}
+(
+  partial.effects.life.stage.ftp.plot <- ggplot(
+    pred_summary %>% 
+      mutate(life_stage = fct_relevel(life_stage, "Adult", "Juvenile")),
+    aes(
+      x = FTP,
+      y = median,
+      color = life_stage,
+      fill = life_stage
+    )
+  ) +
+    geom_ribbon(
+      aes(ymin = lower, ymax = upper),
+      alpha = 0.2,
+      color = NA
+    ) +
+    geom_line(size = 1) +
+    labs(
+      y = "Change in total length (mm) per year",
+      x = "FTP",
+      fill = "Life Stage",
+      color = "Life Stage"
+    ) +
+    scale_fill_viridis_d(end = 0.9, option = "C") +
+    scale_color_viridis_d(end = 0.9, option = "C") +
+    theme_bw()
+)
+```
+
+### Remove Rainbow Trout and Northern Pike
+```{r}
+second_model_bayes_spp_removed <- brm( formula = bf(
+  slope_bayes | se(se_slope) ~ FTP*life_stage),
+  data = slopes %>% filter(Species %in% c("Rainbow Trout", "Northern Pike")),
+  family = gaussian(),
+  chains = 4,
+  cores = 4,
+  control = list(adapt_delta = 0.8)
+)
+
+summary(second_model_bayes_spp_removed)
+```
+
+Post-hoc comparisons
+```{r}
+# 'emtrends' estimates the slope of FTP within each life_stage level
+ftp_slopes_spp_removed <- emtrends(second_model_bayes_spp_removed, ~ life_stage, var = "FTP")
+summary(ftp_slopes_spp_removed)
+pairs(ftp_slopes_spp_removed)  # Compare FTP slope between life stages
+```
+
+Extract posterior summary
+```{r}
+#create range of FTP to predict over
+pred_grid_spp_removed <- expand.grid(
+  FTP = seq(min(slopes$FTP, na.rm = TRUE), max(slopes$FTP, na.rm = TRUE), length.out = 100),
+  life_stage = unique(slopes$life_stage),
+  se_slope = 0
+)
+
+#extract posterior summaries and intervals for each combination of FTP and Life Stage
+predictions_spp_removed <- add_fitted_draws(
+  model = second_model_bayes_spp_removed,
+  newdata = pred_grid_spp_removed,
+  re_formula = NA  # Ensures population-level prediction
+)
+
+#summarize
+pred_summary_spp_removed <- predictions_spp_removed %>%
+  group_by(FTP, life_stage) %>%
+  summarise(
+    median = median(.value),
+    lower = quantile(.value, 0.025),
+    upper = quantile(.value, 0.975)
+  ) %>%
+  ungroup()
+```
+
+Plot
+```{r}
+(
+  partial.effects.life.stage.ftp.plot.spp.removed <- ggplot(
+    pred_summary_spp_removed %>%
+      mutate(life_stage = fct_relevel(life_stage, "Adult", "Juvenile")),
+    aes(
+      x = FTP,
+      y = median,
+      color = life_stage,
+      fill = life_stage
+    )
+  ) +
+    geom_ribbon(
+      aes(ymin = lower, ymax = upper),
+      alpha = 0.2,
+      color = NA
+    ) +
+    geom_line(size = 1) +
+    labs(
+      y = "Change in total length (mm) per year",
+      x = "FTP",
+      fill = "Life Stage",
+      color = "Life Stage"
+    ) +
+    scale_fill_viridis_d(
+      end = 0.9,
+      option = "C"
+    ) +
+    scale_color_viridis_d(
+      end = 0.9,
+      option = "C"
+    ) +
+    theme_bw()
+)
+```
+
+Fully Bayesian two-level/joint model via posterior simulation - did not end up using this approach
+<!-- # ```{r} -->
+<!-- # #extract posterior draws -->
+<!-- # draws <- fit2 %>% -->
+<!-- #   spread_draws( -->
+<!-- #     r_species_age_group[species_age_group, begin_date_year] -->
+<!-- #   ) %>% -->
+<!-- #   mutate( -->
+<!-- #     slope = r_species_age_group -->
+<!-- #   ) %>%  -->
+<!-- #   #format to join -->
+<!-- #   separate(species_age_group, into = c("Species", "Age"), sep = "[//.]") %>%  -->
+<!-- #   mutate(Species = Species %>%  -->
+<!-- #            str_replace_all("_", " ") %>%  -->
+<!-- #            str_to_title()) %>%  -->
+<!-- #   #join with other covariates to set up model -->
+<!-- #   left_join(slopes %>%  -->
+<!-- #               select(Species, Age, FTP, life_stage), -->
+<!-- #             by = c("Species", "Age")) -->
+<!-- #  -->
+<!-- # #nest posterior draws -->
+<!-- # draws_nested <- draws %>% -->
+<!-- #   select(.draw, Species, Age, slope, FTP, life_stage) %>% -->
+<!-- #   group_by(.draw) %>% -->
+<!-- #   nest() -->
+<!-- #  -->
+<!-- # #function to fit a linear model slope ~ FTP + Life Stage for each posterior draw -->
+<!-- # fit_lm_for_draw <- function(df) { -->
+<!-- #   summary(lm(slope ~ FTP*life_stage, data = df))$coef[, "Estimate"] -->
+<!-- # } -->
+<!-- #  -->
+<!-- # #apply the function to each nested data set -->
+<!-- # draws_nested <- draws_nested %>% -->
+<!-- #   mutate(beta = map(data, fit_lm_for_draw)) -->
+<!-- #  -->
+<!-- # #unnest posterior samples -->
+<!-- # posterior_coefs <- draws_nested %>% -->
+<!-- #   select(.draw, beta) %>% -->
+<!-- #   unnest_wider(beta)  # One column per coefficient -->
+<!-- #  -->
+<!-- # posthoc_draws <- posterior_coefs %>% -->
+<!-- #   rename( -->
+<!-- #     FTP_main = FTP, -->
+<!-- #     FTP_Adult = `FTP:life_stageJuvenile`          -->
+<!-- #   )%>% -->
+<!-- #   transmute( -->
+<!-- #     ftp_slope_adult = FTP_main, -->
+<!-- #     ftp_slope_juvenile = FTP_main + FTP_Adult, -->
+<!-- #     ftp_slope_diff = FTP_Adult    # (Adult - Juvenile), same as interaction term -->
+<!-- # ) -->
+<!-- #  -->
+<!-- # posterior_coefs_summary <- posthoc_draws %>%   -->
+<!-- #   summarise( -->
+<!-- #     juvenile_slope_mean = mean(ftp_slope_juvenile), -->
+<!-- #     juvenile_slope_l95 = quantile(ftp_slope_juvenile, 0.025), -->
+<!-- #     juvenile_slope_u95 = quantile(ftp_slope_juvenile, 0.975), -->
+<!-- #     adult_slope_mean = mean(ftp_slope_adult), -->
+<!-- #     adult_slope_l95 = quantile(ftp_slope_adult, 0.025), -->
+<!-- #     adult_slope_u95 = quantile(ftp_slope_adult, 0.975), -->
+<!-- #     diff_mean = mean(ftp_slope_diff), -->
+<!-- #     diff_l95 = quantile(ftp_slope_diff, 0.025), -->
+<!-- #     diff_u95 = quantile(ftp_slope_diff, 0.975) -->
+<!-- #   ) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # Visualize -->
+<!-- # ```{r} -->
+<!-- # posthoc_long <- posthoc_draws %>% -->
+<!-- #   pivot_longer(cols = starts_with("ftp_slope_"), names_to = "type", values_to = "value") -->
+<!-- #  -->
+<!-- # (ftp.posterior.slopes <- ggplot(posthoc_long %>%  -->
+<!-- #                                   filter(type %in% c("ftp_slope_juvenile", "ftp_slope_adult")) %>%  -->
+<!-- #                                   mutate(type = if_else(type == "ftp_slope_juvenile", "Adult","Juvenile")), -->
+<!-- #        aes(x = value, fill = type)) + -->
+<!-- #   geom_density(alpha = 0.8) + -->
+<!-- #   labs(x = "FTP Slope", y = "Posterior Density",  -->
+<!-- #        #title = "Posterior FTP Slopes by Life Stage", -->
+<!-- #        fill = "Group") + -->
+<!-- #   #scale_fill_manual(labels = c("Adult", "Juvenile"), values = c("#1b9e77", "#d95f02")) -->
+<!-- #   scale_fill_viridis_d(end = 0.8, option = "C")+ -->
+<!-- #   scale_y_continuous(expand = c(0,0))+ -->
+<!-- #   theme_bw() -->
+<!-- # ) -->
+<!-- # ``` -->
+<!-- #  -->
+<!-- # ```{r} -->
+<!-- # ggplot(posthoc_draws, aes(x = ftp_slope_diff)) + -->
+<!-- #   geom_density(fill = "#7570b3", alpha = 0.5) + -->
+<!-- #   geom_vline(aes(xintercept = 0), linetype = "dashed", color = "red") + -->
+<!-- #   labs( -->
+<!-- #     x = "Difference in FTP Slope (Adult - Juvenile)", -->
+<!-- #     y = "Posterior Density", -->
+<!-- #     title = "Posterior Difference in FTP Slope: Adult vs Juvenile" -->
+<!-- #   ) -->
+<!-- #  -->
+<!-- # ci <- quantile(posthoc_draws$ftp_slope_diff, c(0.025, 0.975)) -->
+<!-- # ggplot(posthoc_draws, aes(x = ftp_slope_diff)) + -->
+<!-- #   geom_density(fill = "#7570b3", alpha = 0.5) + -->
+<!-- #   geom_vline(xintercept = 0, linetype = "dashed") + -->
+<!-- #   geom_vline(xintercept = ci, linetype = "dotted", color = "darkgrey") + -->
+<!-- #   annotate("text", x = ci[1], y = 0, label = sprintf("%.2f", ci[1]), vjust = -1.5) + -->
+<!-- #   annotate("text", x = ci[2], y = 0, label = sprintf("%.2f", ci[2]), vjust = -1.5) + -->
+<!-- #   labs(x = "Difference in FTP Slope (Adult - Juvenile)", y = "Posterior Density") -->
+<!-- # ``` -->
+
+### Multipanel figures
+#### Figure 3
+```{r}
+fig3.bayes <- ggarrange(
+  bayes.slopes.all.age.percent.change.plot,
+  partial.effects.life.stage.ftp.plot, 
+  bayes.slopes.all.plot.percent.juvenile,
+  bayes.slopes.all.plot.percent.adult,
+  ncol = 2,
+  nrow = 3,
+  #common.legend = T,
+  legend = "right",
+  labels = "AUTO"
+)
+
+fig3.bayes
+
+ggsave(
+  filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/fig3_bayes.tiff",
+  fig3.bayes,
+  dpi = 300,
+  width = 300,
+  height = 300,
+  units = "mm"
+)
+```
+#### Figure S14
+```{r}
+figS14 <- ggarrange(
+  bayes.slopes.linear.plot,
+  bayes.slopes.linear.plot.remove.spp,
+  partial.effects.life.stage.ftp.plot,
+  partial.effects.life.stage.ftp.plot.spp.removed,
+  ncol = 2,
+  nrow = 2,
+  common.legend = T,
+  legend = "right",
+  labels = "AUTO",
+  hjust = -1.4
+)
+
+figS14
+
+ggsave(
+  filename = "~/GitHub/EAGER_growth/Outputs/Figures/Linear Models/figS14.tiff",
+  figS14,
+  dpi = 300,
+  width = 200,
+  height = 150,
+  units = "mm"
+)
+```
+
+# Post-2015
+Aging protocols changed after 2015 to include multiple structures for some species.
+We are investigating if there is any evidence that trends change post-2015.
+
+## Plot raw data
+```{r}
+grow.merge.target.spp.clean <- grow.merge.target.spp %>% 
+  mutate(species = species %>% 
+           str_replace_all("_", " ") %>% 
+           str_to_title()) %>% 
+  rename(`Age Group` = age_group)
+
+(all.spp.year <- ggplot(data = grow.merge.target.spp.clean, 
+                        aes(x = begin_date_year, y = length_mean_mm, 
+                            color = `Age Group`, fill = `Age Group`))+
+   #geom_point(alpha = 0.1)+
+   geom_smooth()+
+   geom_vline(xintercept = 2015, color = "red", linetype = "dashed")+
+   facet_wrap(~species, scales = "free")+
+   scale_y_continuous(expand = c(0,0))+
+   scale_color_viridis_d()+
+   scale_fill_viridis_d()+
+   theme_bw()
+)
+
+#No obvious differences in trends post-2015
+
+ggsave(
+  filename = "~/GitHub/EAGER_growth/Outputs/Figures/raw_data_smooth_spp_age_group.tiff",
+  all.spp.year,
+  dpi = 300,
+  width = 300,
+  height = 250,
+  units = "mm"
+)
+```
+
+

@@ -1,0 +1,142 @@
+,Species,IBI,IBI_alt,WI_cold,SNT,MNRF_num,MNRF_let,target spp
+8,black crappie,black.crappie,NA,NA,BCR,319,BlCra,1
+13,blacknose shiner,blacknose.shiner,NA,NA,BNS,200,BnShi,1
+17,bluegill,bluegill,NA,NA,BLG,314,Blueg,1
+19,bluntnose minnow,bluntnose.minnow,NA,NA,BNM,208,BnMin,1
+26,brook trout,brook.trout,NA,NA,BKT,80,BkTro,1
+28,brown trout,brown.trout,NA,NA,BNT,78,BwTro,1
+35,cisco,cisco,NA,cisco,CIS,93,LaHer,1
+37,common carp,common.carp,NA,NA,CAR,186,CoCar,1
+38,common shiner,common.shiner,NA,NA,CSH,198,CoShi,1
+41,emerald shiner,emerald.shiner,NA,NA,EMS,196,EmShi,1
+44,fathead minnow,fathead.minnow,NA,NA,FHM,209,FhMin,1
+50,golden shiner,golden.shiner,NA,NA,GOS,194,GoShi,1
+55,green sunfish,green.sunfish,NA,NA,GSF,312,GrSun,1
+58,iowa darter,Iowa.darter,NA,NA,IOD,338,IoDar,1
+59,johnny darter,Johnny.darter,NA,NA,JOD,341,JoDar,1
+63,lake trout ,lake.trout,NA,laketrout,LAT,81,LaTro,1
+64,lake whitefish,lake.whitefish,NA,whitefish,LWF,91,LaWhi,1
+65,largemouth bass,largemouth.bass,NA,NA,LMB,317,LmBas,1
+76,muskellunge,muskellunge,NA,NA,MUS,132,Muske,1
+81,northern pike,northern.pike,NA,NA,NOP,131,NoPik,1
+90,pumpkinseed,pumpkinseed,NA,NA,PSF,313,Pumpk,1
+94,rainbow trout,rainbow.trout,NA,NA,RBT,76,RaTro,1
+100,rock bass,rock.bass,NA,NA,RKB,311,RoBas,1
+115,smallmouth bass,smallmouth.bass,NA,NA,SMB,316,SmBas,1
+121,spottail shiner,spottail.shiner,NA,NA,STS,201,SpShi,1
+131,walleye,walleye,NA,NA,WAE,334,Walle,1
+137,white sucker,white.sucker,NA,NA,CWS,163,WhSuc,1
+140,yellow perch,yellow.perch,NA,NA,YEP,331,YePer,1
+0,alewife,NA,NA,NA,ALE,61,Alewi,
+1,american eel,NA,NA,NA,AME,251,AmEel,
+2,atlantic salmon,NA,NA,NA,ATS,77,AtSal,
+3,banded killifish,banded.killifish,NA,NA,BKF,261,BaKil,
+4,bigmouth buffalo,bigmouth.buffalo,NA,NA,BIB,166,BmBuf,
+5,bigmouth shiner,bigmouth.shiner,NA,NA,BMS,NA,NA,
+6,black buffalo,NA,NA,NA,BBF,174,BlBuf,
+7,black bullhead,black.bullhead,NA,NA,BLB,231,BlBul,
+9,black redhorse,NA,NA,NA,BLR,169,BlRed,
+10,blackchin shiner,blackchin.shiner,NA,NA,BCS,199,BcShi,
+11,blackfin cisco,NA,NA,NA,BFC,97,BfCis,
+12,blacknose dace,blacknose.dace,NA,NA,BND,210,BnDac,
+14,blackside darter,blackside.darter,NA,NA,BSD,344,BsDar,
+15,blackstripe topminnow,NA,NA,NA,BST,262,BsTop,
+16,bloater,NA,NA,NA,BLO,94,Bloat,
+18,bluntnose darter,bluntnose.darter,NA,NA,NA,NA,NA,
+20,bowfin,bowfin.(dogfish),bowfin..dogfish.,NA,BOW,51,Bowfi,
+21,brassy minnow,brassy.minnow,NA,NA,BRM,189,BrMin,
+22,bridle shiner,NA,NA,NA,NA,197,BrShi,
+23,brindled madtom,NA,NA,NA,BMT,237,BrMad,
+24,brook silverside,brook.silverside,NA,NA,BSS,361,BrSil,
+25,brook stickleback,brook.stickleback,NA,NA,BSB,281,BrSti,
+27,brown bullhead,brown.bullhead,NA,NA,BRB,233,BrBul,
+29,burbot,burbot,NA,NA,BUR,271,Burbo,
+30,central mudminnow,central.mudminnow,NA,NA,MUD,141,CeMud,
+31,central stoneroller,central.stoneroller,NA,NA,CSR,216,CeSto,
+32,channel catfish,channel.catfish,NA,NA,CCF,234,ChCat,
+33,chestnut lamprey,chestnut.lamprey,NA,NA,CNL,16,ChLam,
+34,chinook salmon,NA,NA,NA,CHS,75,ChSal,
+36,coho salmon,NA,NA,NA,COS,73,CoSal,
+39,creek chub,creek.chub,NA,NA,CRC,212,CrChu,
+40,deepwater sculpin,NA,NA,NA,DWS,384,DwScu,
+42,fallfish,NA,NA,NA,NA,213,Fallf,
+43,fantail darter,NA,NA,NA,FTD,339,FtDar,
+45,finescale dace,finescale.dace,NA,NA,FSD,183,FsDac,
+46,flathead catfish,NA,NA,NA,FCF,239,FhCat,
+47,freshwater drum,freshwater.drum,NA,NA,DRU,371,FwDru,
+48,gizzard shad,gizzard.shad,NA,NA,GZS,63,GiSha,
+49,golden redhorse,golden.redhorse,NA,NA,GOR,170,GoRed,
+51,goldeye,NA,NA,NA,NA,151,Golde,
+52,goldfish,NA,NA,NA,GOF,181,Goldf,
+53,grass pickerel,NA,NA,NA,GRP,133,GrPic,
+54,greater redhorse,greater.redhorse,NA,NA,GRR,172,GrRed,
+56,greenside darter,NA,NA,NA,GSD,336,GsDar,
+57,hornyhead chub,hornyhead.chub,NA,NA,HHC,192,HhChu,
+60,lake chub,NA,NA,NA,LAC,185,LaChu,
+61,lake chubsucker,NA,NA,NA,LCS,164,LaChs,
+62,lake sturgeon,lake.sturgeon,NA,NA,STN,31,LAStu,
+66,least darter,least.darter,NA,NA,LED,340,LeDar,
+67,logperch,logperch,NA,NA,LOG,342,Logpe,
+68,longear sunfish,northern.sunfish,NA,NA,LSF,315,LeSun,
+69,longjaw cisco,NA,NA,NA,NA,92,LjCis,
+70,longnose dace,longnose.dace,NA,NA,LND,211,LnDac,
+71,longnose gar,longnose.gar,NA,NA,LNG,41,LnGar,
+72,longnose sucker,NA,NA,NA,LNS,162,LnSuc,
+73,mimic shiner,mimic.shiner,NA,NA,MIS,206,MiShi,
+74,mooneye,NA,NA,NA,MOO,152,Moone,
+75,mottled sculpin,mottled.sculpin,NA,NA,MOS,381,MoScu,
+77,ninespine stickleback,NA,NA,NA,NSB,283,NiSti,
+78,nipigon cisco,NA,NA,NA,NA,98,NiCis,
+79,northern brook lamprey,NA,NA,NA,NBL,12,NBLam,
+80,northern hog sucker,northern.hog.sucker,NA,NA,NHS,165,NHSuc,
+82,northern redbelly dace,northern.redbelly.dace,NA,NA,NRD,182,NRDac,
+83,orangespotted sunfish,orangespotted.sunfish,NA,NA,OSF,324,OsSun,
+84,pearl dace,northern.pearl.dace,NA,NA,PRD,214,PeDac,
+85,pink salmon,NA,NA,NA,PKS,71,PiSal,
+86,pirate perch,NA,NA,NA,PIP,NA,NA,
+87,plains topminnow,plains.topminnow,NA,NA,NA,NA,NA,
+88,pugnose minnow,pugnose.minnow,NA,NA,PNM,207,PnMin,
+89,pugnose shiner,pugnose.shiner,NA,NA,PNS,195,PnShi,
+91,quillback,quillback,NA,NA,QIL,161,Quill,
+92,rainbow darter,rainbow.darter,NA,NA,RBD,337,RaDar,
+93,rainbow smelt,rainbow.smelt,NA,NA,SMT,121,RaSme,
+95,redear sunfish,NA,NA,NA,RSF,NA,NA,
+96,river carpsucker,river.carpsucker,NA,NA,NA,NA,NA,
+97,river chub,NA,NA,NA,RIC,193,RiChu,
+98,river darter,NA,NA,NA,RID,345,RiDar,
+99,river redhorse,river.redhorse,NA,NA,RIR,173,RiRed,
+101,rosyface shiner,NA,NA,NA,ROS,202,RoShi,
+102,round goby,NA,NA,NA,RGB,366,RoGob,
+103,round whitefish,NA,NA,NA,RWF,102,RoWhi,
+104,ruffe,NA,NA,NA,RUF,350,Ruffe,
+105,sand shiner,sand.shiner,NA,NA,SAS,204,SaShi,
+106,sauger,sauger,NA,NA,SAU,332,Sauge,
+107,sea lamprey,NA,NA,NA,SEL,14,SeLam,
+108,shorthead redhorse,shorthead.redhorse,NA,NA,SHR,171,ShRed,
+109,shortnose gar,shortnose.gar,NA,NA,NA,NA,NA,
+110,shovelnose sturgeon,shovelnose.sturgeon,NA,NA,NA,NA,NA,
+111,silver lamprey,NA,NA,NA,SIL,13,SiLam,
+112,silver redhorse,silver.redhorse,NA,NA,SIR,168,SiRed,
+113,slenderhead darter,slenderhead.darter,NA,NA,NA,NA,NA,
+114,slimy sculpin,slimy.sculpin,NA,NA,SLS,382,SlScu,
+116,smallmouth buffalo,smallmouth.buffalo,NA,NA,NA,175,SmBuf,
+117,sockeye salmon,NA,NA,NA,SOS,74,SoSal,
+118,splake,splake,NA,NA,SPL,82,Splak,
+119,spoonhead sculpin,NA,NA,NA,SHS,383,ShScu,
+120,spotfin shiner,spotfin.shiner,NA,NA,SFS,203,SfShi,
+122,spotted gar,NA,NA,NA,SPG,42,SpGar,
+123,spotted sucker,NA,NA,NA,SPS,167,SpSuc,
+124,starhead topminnow,NA,NA,NA,SHT,NA,NA,
+125,stonecat,NA,NA,NA,STC,235,Stone,
+126,striped shiner,NA,NA,NA,SRS,217,StShi,
+127,tadpole madtom,tadpole.madtom,NA,NA,TMT,236,TaMad,
+128,threespine stickleback,NA,NA,NA,TSB,282,ThSti,
+129,tiger muskellunge,tiger.muskellunge,NA,NA,TMU,502,Hy502,
+130,trout perch,trout-perch,NA,NA,TRP,291,TrPer,
+132,warmouth,NA,NA,NA,WAR,323,Warmo,
+133,weed shiner,weed.shiner,NA,NA,WES,NA,NA,
+134,white bass,white.bass,NA,NA,WHB,302,WhBas,
+135,white crappie,white.crappie,NA,NA,WCR,318,WhCra,
+136,white perch,NA,NA,NA,WHP,301,WhPer,
+138,yellow bass,yellow.bass,NA,NA,NA,NA,NA,
+139,yellow bullhead,yellow.bullhead,NA,NA,YLB,232,YeBul,
