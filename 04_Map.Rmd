@@ -1,0 +1,493 @@
+---
+title: "06_Map"
+author: "Peter Flood"
+date: "2024-10-31"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    toc: yes
+    toc_float: yes
+---
+
+Install Packages
+```{r}
+#Install libraries if needed
+if (!require("spData")) install.packages("spData")
+if (!require("sf")) install.packages("sf")
+if (!require("openxlsx")) install.packages("openxlsx")
+if (!require("tidyverse")) install.packages("tidyverse")
+if (!require("ggpubr")) install.packages("ggpubr")
+if (!require("gganimate")) install.packages("gganimate")
+if (!require("gifski")) install.packages("gifski")
+```
+
+Load Libraries
+```{r}
+library(spData) #mapping
+library(sf) #mapping
+library(openxlsx) #Reading and writing Excel files
+library(tidyverse) #Data management, plotting
+library(ggpubr) #multipanel figures
+library(gganimate) #create GIF
+library(gifski) #save GIF
+```
+
+# Load data
+```{r}
+all.grow.merge <- read.xlsx("~/GitHub/EAGER_growth/Outputs/all_grow_lake_join.xlsx") 
+all.lakes.distinct <- all.grow.merge %>% 
+  distinct(new_key, .keep_all = T)
+#1,519 unqiue lakes
+```
+
+# Read in MI map, get US inset
+```{r}
+data("us_states", package = "spData")
+
+us_states = st_transform(us_states, crs = "+proj=longlat +datum=WGS84 +no_defs") #match the FMU shapefile
+MI<-dplyr::filter(us_states, NAME == 'Michigan')
+plot(MI)
+```
+
+# Map of all lakes
+```{r}
+#get MI basemap 
+# MI<-map_data("state") %>%
+#   subset(region %in% c("michigan")) # select michigan 
+(MI_basemap<-ggplot() + 
+  geom_sf(data=MI, aes(), fill = "white") #+ 
+  #geom_polygon(aes(x = long, y = lat, group = group), fill = "white", color = "black") + #this fill MI white and outline is black
+  #coord_sf(1.3) 
+)
+
+#create a map #you can change the color based on the variable by changing "colour" part
+(map_plot<-MI_basemap + 
+  geom_point(data=all.grow.merge, aes(x = LONG_DD, y = LAT_DD)) +  #
+  labs(color="")  + #changes the labels on the legend 
+  theme_bw() +
+  labs(y = "Latitude", x = "Longitude")+
+  theme(legend.justification.inside = c(0, 0),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 35))
+)
+
+ggsave(map_plot,
+       filename = "Outputs/Figures/Map/all_lakes.tiff",
+       width = 400,
+       height = 300,
+       units = "mm",
+       dpi = 600)
+```
+
+
+# Maps of lake depth and area
+```{r}
+(map_data<-ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") + 
+  geom_point(data=all.lakes.distinct %>% 
+               rename(`Log Max Depth` = log_max_depth), 
+             aes(x = LONG_DD, y = LAT_DD, color = `Log Max Depth`),
+             size = 0.75) +
+  theme_bw() +  
+ #  theme( panel.grid.major = element_blank(),
+ #         panel.grid.minor = element_blank()) +
+ # #clean_theme() + 
+ #  theme_void() +
+  scale_color_viridis_c()+
+  guides(color = guide_legend(position = "inside")) +
+  labs(x = "Longitude", y = "Latitude")+
+  theme(legend.justification.inside = c(0.1, 0.1)) + 
+  theme(legend.text=element_text(size=10),
+        legend.background = element_blank())
+)
+
+(map_data_area<-ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") + 
+  geom_point(data=all.lakes.distinct %>% 
+               rename(`Log Area` = logarea), 
+             aes(x = LONG_DD, y = LAT_DD, color = `Log Area`),
+             size = 0.75) +
+  theme_bw() +  
+ #  theme( panel.grid.major = element_blank(),
+ #         panel.grid.minor = element_blank()) +
+ # #clean_theme() + 
+ #  theme_void() +
+  scale_color_viridis_c()+
+  guides(color = guide_legend(position = "inside")) +
+  labs(x = "Longitude", y = NULL)+
+  theme(legend.justification.inside = c(0.1, 0.1)) + 
+  theme(legend.text=element_text(size=10),
+        legend.background = element_blank())
+)
+
+combined.map <- ggarrange(map_data, map_data_area, 
+                          nrow = 1, ncol = 2, 
+                          labels = "AUTO", align = "hv",
+                          label.y = 0.95)
+combined.map
+
+ggsave( combined.map, 
+        device = "png", 
+        filename = "Outputs/Figures/Map/map_of_data.png", 
+        dpi = 300, height = 5, width = 8, units = "in",
+        bg="#ffffff") #sets background to white 
+```
+# Map of surface temp
+```{r}
+#need to reformat data
+all.lakes.distinct.year <- all.grow.merge %>% 
+  distinct(new_key, begin_date_year, .keep_all = T)
+
+#calculate mean 
+temp.dd.decade.means <- all.lakes.distinct.year %>% 
+  mutate(decade = (begin_date_year %/% 10)*10) %>% 
+  group_by(new_key, decade, LAT_DD, LONG_DD) %>% 
+  summarise(decade_dd = mean(dd_year, na.rm = T), 
+            decade_temp = mean(surf_temp_year, na.rm = T))
+
+#inspect resulting df
+head(temp.dd.decade.means)
+
+all.lakes.2020 <- all.lakes.distinct.year %>% 
+  mutate(decade = (begin_date_year %/% 10)*10) %>% 
+  filter(decade == "2020")
+
+#generate map with panels per decade
+(map_temp_decade <- ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") +
+  geom_point(data = temp.dd.decade.means %>% 
+               filter(!is.na(decade_temp),
+                      !is.na(decade)), 
+             aes(x = LONG_DD, y = LAT_DD,
+                 color = decade_temp, fill = decade_temp), 
+             size = 0.75, shape = 21) + 
+  labs(#title = "Surface Temperature by Decade",
+       x = "Longitude",
+       y = "Latitude",
+       color = "Surface Temp. (°C)",
+       fill = "Surface Temp. (°C)") + 
+  facet_wrap(~ decade) + 
+  # scale_color_gradient(low = "blue", high = "red") +
+  # scale_fill_gradient(low = "blue", high = "red") +
+  scale_color_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "B")+
+  theme_minimal() +
+  theme(axis.text = element_text(size = 6))
+)
+
+
+ggsave(
+  map_temp_decade,
+  device = "png",
+  filename = "Outputs/Figures/Map/map_temp_decade.png",
+  dpi = 300,
+  height = 5,
+  width = 8,
+  units = "in",
+  bg = "#ffffff"
+)
+```
+
+## GIF
+```{r}
+(gif_temp_decade <- ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") +
+  geom_point(data = all.lakes.distinct.year %>% 
+               filter(!is.na(surf_temp_year),
+                      !is.na(begin_date_year)), 
+             aes(x = LONG_DD, y = LAT_DD,
+                 color = surf_temp_year, fill = surf_temp_year), 
+             size = 3, shape = 21) + 
+  labs(x = "Longitude",
+       y = "Latitude",
+       color = "Surface Temp. (°C)",
+       fill = "Surface Temp. (°C)") + 
+  scale_color_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "B")+
+  transition_time(as.integer(begin_date_year)) +      # Animate over the 'year' variable
+  ease_aes('linear') +       # smooth transitions
+  labs(subtitle = 'Year: {frame_time}') + # Dynamic year display in subtitle
+  theme_minimal() +
+  theme(axis.text = element_text(size = 6))
+)
+
+# Save the animation as GIF
+animate(gif_temp_decade, duration = 20, fps = 2, renderer = gifski_renderer("Outputs/Figures/Map/surf_temp_animation.gif"))
+```
+
+# Map of DD
+```{r}
+#generate map with panels per decade
+(map_dd_decade <- ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") +
+  geom_point(data = temp.dd.decade.means %>% 
+               filter(!is.na(decade_dd),
+                      !is.na(decade)), 
+             aes(x = LONG_DD, y = LAT_DD,
+                 color = decade_dd, fill = decade_dd), 
+             size = 0.75, shape = 21) + 
+  labs(#title = "Surface dderature by Decade",
+       x = "Longitude",
+       y = "Latitude",
+       color = "Degree Days",
+       fill = "Degree Days") + 
+  facet_wrap(~ decade) + 
+  # scale_color_gradient(low = "blue", high = "red") +
+  # scale_fill_gradient(low = "blue", high = "red") +
+  scale_color_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "B")+
+  theme_minimal() +
+  theme(axis.text = element_text(size = 6))
+)
+
+
+ggsave(
+  map_dd_decade,
+  device = "png",
+  filename = "Outputs/Figures/Map/map_dd_decade.png",
+  dpi = 300,
+  height = 5,
+  width = 8,
+  units = "in",
+  bg = "#ffffff"
+)
+```
+
+## GIF
+```{r}
+(gif_dd_decade <- ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") +
+  geom_point(data = all.lakes.distinct.year %>% 
+               filter(!is.na(dd_year),
+                      !is.na(begin_date_year)), 
+             aes(x = LONG_DD, y = LAT_DD,
+                 color = dd_year, fill = dd_year), 
+             size = 3, shape = 21) + 
+  labs(x = "Longitude",
+       y = "Latitude",
+       color = "Degree Days",
+       fill = "Degree Days") + 
+  scale_color_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "B")+
+  transition_time(as.integer(begin_date_year)) +      # Animate over the 'year' variable
+  ease_aes('linear') +       # smooth transitions
+  labs(subtitle = 'Year: {frame_time}') + # Dynamic year display in subtitle
+  theme_minimal() +
+  theme(axis.text = element_text(size = 6))
+)
+
+# Save the animation as GIF
+animate(gif_dd_decade, duration = 20, fps = 2, renderer = gifski_renderer("Outputs/Figures/Map/dd_animation.gif"))
+```
+
+# Combine temp and dd maps
+```{r}
+(map_temp_dd_combined <- ggarrange(map_temp_decade, map_dd_decade, 
+                                   nrow = 2, ncol = 1,
+                                   align = "v")
+)
+
+ggsave(
+  map_temp_dd_combined,
+  device = "png",
+  filename = "Outputs/Figures/Map/map_temp_dd_combined.png",
+  dpi = 300,
+  height = 5,
+  width = 8,
+  units = "in",
+  bg = "#ffffff"
+)
+```
+
+#Plot all temp data
+Make plots/GIFs for all lakes, not just lakes sampled in a given year
+
+#Load data and format
+```{r}
+
+#need this table to connect NHDids with the new_keys
+lake_link <- read.csv("~/GitHub/EAGER_growth/Data/new_key_comid_translate.csv") %>% #from Kevin (includes ~25 lakes that were updated with nhdids)
+  rename(new_key = NEW_KEY, nhdid = COMID) %>%
+  dplyr::select(nhdid, new_key)
+
+#get lat/lons from Humpries table
+points <- read.csv("~/GitHub/EAGER_growth/Data/Humphries_modified.csv") %>%
+  rename(new_key = New_Key) %>%
+  dplyr::select(new_key, LONG_DD, LAT_DD)
+
+#surface temp by year
+surface_temp <- read.csv("~/GitHub/EAGER_growth/Data/lake_surface_temp.csv") %>%
+  group_by(IHDLKID) %>%
+  slice_max(HECTARES) %>%
+  rename(nhdid = IHDLKID) %>%
+  pivot_longer(
+    #this makes all of the years into rows instead of columns
+    cols = starts_with("TAVE_"),
+    names_to = "year",
+    names_prefix = "TAVE_",
+    values_to = "surf_temp_year"
+  ) %>%
+  mutate(year = as.integer(as.character(year))) %>%
+  select(nhdid, year, surf_temp_year) %>%
+  ungroup()
+
+#DD by year 
+dd_temp<-read.csv("~/GitHub/EAGER_growth/Data/lake_degree_days_year.csv") %>%
+  select(-c(HECTARES, FETCH_M, ZMAX_M, ZAVE_M, D)) %>% 
+  group_by(IHDLKID) %>%
+  summarise_all(mean) %>% 
+  rename(nhdid = IHDLKID)%>% 
+  pivot_longer(                   #this makes all of the years into rows instead of columns 
+    cols= starts_with("DD_"),
+    names_to = "year", 
+    names_prefix = "DD_",
+    values_to = "dd_year") %>% 
+  mutate(year = as.integer(as.character(year))) %>% 
+  ungroup()
+
+dd_surf_temp_year <- left_join(dd_temp, lake_link) %>% 
+  left_join(points) %>% 
+  left_join(surface_temp, by = c("nhdid" = "nhdid", "year" = "year")) %>% 
+  #remove rows missing lat/long
+  filter(!is.na(LAT_DD), !is.na(LONG_DD))
+
+dd_surf_temp_decade <- dd_surf_temp_year %>% 
+  mutate(decade = (year %/% 10)*10) %>% 
+  group_by(new_key, decade, LAT_DD, LONG_DD) %>% 
+  summarise(decade_dd = mean(dd_year, na.rm = T), 
+            decade_temp = mean(surf_temp_year, na.rm = T))
+```
+
+## Surface Temperature
+### Decades
+```{r}
+#generate map with panels per decade
+(map_all_temp_decade <- ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") +
+  geom_point(data = dd_surf_temp_decade %>% 
+               filter(!is.na(decade_temp),
+                      !is.na(decade)), 
+             aes(x = LONG_DD, y = LAT_DD,
+                 color = decade_temp, fill = decade_temp), 
+             size = 0.01, shape = 21) + 
+  labs(#title = "Surface Temperature by Decade",
+       x = "Longitude",
+       y = "Latitude",
+       color = "Surface Temp. (°C)",
+       fill = "Surface Temp. (°C)") + 
+  facet_wrap(~ decade) + 
+  # scale_color_gradient(low = "blue", high = "red") +
+  # scale_fill_gradient(low = "blue", high = "red") +
+  scale_color_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "B")+
+  theme_minimal() +
+  theme(axis.text = element_text(size = 6))
+)
+
+
+ggsave(
+  map_all_temp_decade,
+  device = "png",
+  filename = "Outputs/Figures/Map/map_all_temp_decade.png",
+  dpi = 300,
+  height = 5,
+  width = 8,
+  units = "in",
+  bg = "#ffffff"
+)
+```
+
+### GIF
+```{r}
+(gif_all_temp <- ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") +
+  geom_point(data = dd_surf_temp_year %>% 
+               filter(!is.na(surf_temp_year),
+                      !is.na(year)), 
+             aes(x = LONG_DD, y = LAT_DD,
+                 color = surf_temp_year, fill = surf_temp_year), 
+             size = 3, shape = 21) + 
+  labs(x = "Longitude",
+       y = "Latitude",
+       color = "Surface Temp. (°C)",
+       fill = "Surface Temp. (°C)") + 
+  scale_color_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "B")+
+  transition_time(as.integer(year)) +      # Animate over the 'year' variable
+  ease_aes('linear') +       # smooth transitions
+  labs(subtitle = 'Year: {frame_time}') + # Dynamic year display in subtitle
+  theme_minimal() +
+  theme(axis.text = element_text(size = 6))
+)
+
+# Save the animation as GIF
+animate(gif_all_temp, duration = 45, fps = 2, renderer = gifski_renderer("Outputs/Figures/Map/all_surf_temp_animation.gif"))
+```
+
+## Degree Days
+### Decades
+```{r}
+#generate map with panels per decade
+(map_all_dd_decade <- ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") +
+  geom_point(data = dd_surf_temp_decade %>% 
+               filter(!is.na(decade_dd),
+                      !is.na(decade)), 
+             aes(x = LONG_DD, y = LAT_DD,
+                 color = decade_dd, fill = decade_dd), 
+             size = 0.5, shape = 21) + 
+  labs(#title = "Surface Temperature by Decade",
+       x = "Longitude",
+       y = "Latitude",
+       color = "Degree Days",
+       fill = "Degree Days") + 
+  facet_wrap(~ decade) + 
+  # scale_color_gradient(low = "blue", high = "red") +
+  # scale_fill_gradient(low = "blue", high = "red") +
+  scale_color_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "B")+
+  theme_minimal() +
+  theme(axis.text = element_text(size = 6))
+)
+
+
+ggsave(
+  map_all_dd_decade,
+  device = "png",
+  filename = "Outputs/Figures/Map/map_all_dd_decade.png",
+  dpi = 300,
+  height = 5,
+  width = 8,
+  units = "in",
+  bg = "#ffffff"
+)
+```
+
+### GIF
+```{r}
+(gif_all_dd <- ggplot() +
+  geom_sf(data=MI, aes(), fill = "white") +
+  geom_point(data = dd_surf_temp_year %>% 
+               filter(!is.na(dd_year),
+                      !is.na(year)), 
+             aes(x = LONG_DD, y = LAT_DD,
+                 color = dd_year, fill = dd_year), 
+             size = 3, shape = 21) + 
+  labs(x = "Longitude",
+       y = "Latitude",
+       color = "Degree Days",
+       fill = "Degree Days") + 
+  scale_color_viridis_c(option = "B") +
+  scale_fill_viridis_c(option = "B")+
+  transition_time(as.integer(year)) +      # Animate over the 'year' variable
+  ease_aes('linear') +       # smooth transitions
+  labs(subtitle = 'Year: {frame_time}') + # Dynamic year display in subtitle
+  theme_minimal() +
+  theme(axis.text = element_text(size = 6))
+)
+
+# Save the animation as GIF
+animate(gif_all_dd, duration = 45, fps = 2, renderer = gifski_renderer("Outputs/Figures/Map/all_dd_animation.gif"))
+```
