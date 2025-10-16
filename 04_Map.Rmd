@@ -64,13 +64,17 @@ plot(MI)
 
 #create a map #you can change the color based on the variable by changing "colour" part
 (map_plot<-MI_basemap + 
-  geom_point(data=all.grow.merge, aes(x = LONG_DD, y = LAT_DD)) +  #
-  labs(color="")  + #changes the labels on the legend 
+  geom_point(data=all.grow.merge, 
+             aes(x = LONG_DD, y = LAT_DD, color = begin_date_year),
+             size = 3) +  
+  scale_color_viridis_c(option = "G") +
   theme_bw() +
-  labs(y = "Latitude", x = "Longitude")+
+  labs(y = "Latitude", x = "Longitude", color = "Year")+
   theme(legend.justification.inside = c(0, 0),
-        axis.text = element_text(size = 20),
-        axis.title = element_text(size = 35))
+        legend.title = element_text(size = 24),
+        legend.text = element_text(size = 16),
+        axis.text = element_text(size = 22),
+        axis.title = element_text(size = 24))
 )
 
 ggsave(map_plot,
