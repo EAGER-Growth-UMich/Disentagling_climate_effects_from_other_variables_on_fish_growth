@@ -14109,6 +14109,37 @@ ggsave("~/GitHub/EAGER_growth/Outputs/Figures/partial_dependency_surf_temp_dd.ti
        units = "mm")
 ```
 
+### Graphical abstract plots
+Create plot of largemouth bass surf temp and walleye dd for graphical abstract
+```{r}
+#organize data for plotting
+lmb.wae <- all.spp.response.matrix %>% 
+  filter((Species == "Largemouth Bass" & Predictor_Name == "Surface Temperature") | 
+           (Species == "Walleye" & Predictor_Name == "Degree Days"))
+
+(lmb.wae.plot <- ggplot(data = lmb.wae, aes(x = Predictor_Value, 
+                                    y = y, 
+                                    color = Age_Group))+
+   geom_line(aes(linetype = Maturity), size = 2)+
+   geom_rug(sides = "b", linewidth = 0.05, alpha = 0.5)+
+   facet_wrap(~Species, scales = "free_x")+
+   labs(y = "Fitted Function", x = NULL)+
+   guides(color = guide_legend(title = "Age Class"))+
+   scale_color_viridis_d()+
+   theme_bw()+
+   theme(legend.key = element_rect(fill = "grey"),
+         text = element_text(size = 30),
+         strip.text = element_text(size = 36))
+)
+
+ggsave("~/GitHub/Disentangling_climate_effects_from_other_variables_on_fish_growth/Outputs/Figures/lmb_wae_plot.tiff",
+       lmb.wae.plot,
+       dpi = 300,
+       width = 600,
+       height = 300,
+       units = "mm")
+
+```
 ######Surface temp by thermal guild
 Cold
 ```{r}
